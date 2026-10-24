@@ -39,6 +39,12 @@ static FunctionCallee unitFnNamed(ModuleCtx& m, const std::string& n) {
   auto* f = Function::Create(FunctionType::get(m.Void, {m.Ptr}, false), GlobalValue::ExternalLinkage, n, &m.M);
   if (m.O.hiddenUnits) f->setVisibility(GlobalValue::HiddenVisibility);
   f->addFnAttr(Attribute::NoUnwind);
+  // Guest pointers are plain host pointers and the game may use any address, null included (it deliberately stores to address 0 after a
+  // panic: `call log; movl $0xdeadba, 0x0`). Without this attribute LLVM treats an access through a constant null pointer as undefined
+  // behaviour and deletes the block, and with it the call-return block before it: the rip check after the call folds to "returned
+  // elsewhere", a normal return turned into an unwind and the game stopped with a missing entry (aot-misses.log, kind=unwind). With it
+  // such an access stays a load/store that faults at run time, as on the PS4.
+  f->addFnAttr(Attribute::NullPointerIsValid);
   f->addParamAttr(0, Attribute::NoAlias);
   return f;
 }

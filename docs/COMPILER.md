@@ -57,13 +57,13 @@ from your PKGs (see the README):
     variants/gen_patchers.py    --main-repo M                              # patchers.txt + hooks-patchers.txt: runs the frame rate, display and guard patchers (needs the image)
     (each has --check: exit 1 when the catalog is out of date)
 
-Tests: `bb-recomp-asmtest --cpuid-diff` (the native CPUID model of the FEX-free runtime, cpu/guest_cpu_cpuid.h, against FEXCore's own over every function and sub-leaf; only in the Bloodborne-Android tree), `bb-recomp-asmtest --granular-selftest` (a unit entered at every instruction boundary of a granular function, flags from the context, a non-boundary refused),
+Tests: `bb-recomp-asmtest --null-selftest` (a call whose return block stores to / loads from address 0, the game's panic: the unit must run the block and fault there, not return at the call-return address; needs `null_pointer_is_valid` on the units), `bb-recomp-asmtest --cpuid-diff` (the native CPUID model of the FEX-free runtime, cpu/guest_cpu_cpuid.h, against FEXCore's own over every function and sub-leaf; only in the Bloodborne-Android tree), `bb-recomp-asmtest --granular-selftest` (a unit entered at every instruction boundary of a granular function, flags from the context, a non-boundary refused),
 `bb-recomp-asmtest --variant-selftest` (a patched function and a cave compiled as variants, run in the in-process JIT, hashes and alternatives checked),
 `bb-recomp-asmtest --hook-selftest` (a hook callback fires, edits registers, flags survive, resume points in the middle of a block and at block entries, return, dispatcher jump, loops),
 `tests/run_aot_patchers_test.sh` of the main project (the patchers' hook slot callbacks against the semantics of the stubs they replace), `tests/run_aot_variants_test.sh` (the runtime's classification of functions, redirects, un-dirtying and hook slots on synthetic tables) and `tests/run_guest_code_hooks_test.sh` (the shim's slot path).
 
 On the real image (the eboot ELF and `boot-linked.bin` that `--game <dump> --keep-work` leaves in `<out>/.bbwork/`, and the dump's `sce_module`; set `BB_ELF`, `BB_BOOT`,
-`BB_SCE_MODULE` or put them in `out/`): `tests/run_recomp_device_regressions.sh <sce_module>` (the two lowering fixes found on the Thor: a packed constant must not be
+`BB_SCE_MODULE` or put them in `out/`): `tests/run_recomp_device_regressions.sh <sce_module>` (the lowering fixes found on the Thor and on the real image: the null store after a panic call keeps `null_pointer_is_valid`; a packed constant must not be
 relocated as an image address, a spin-wait load must be volatile) and `tests/run_aot_entries_check.sh` (the guest addresses the Thor logged as misses are covered by
 units or granular entries; `--extra-entries`, `--check-entries`, `--dump-units`, `--units-only`; about 2 s, no code generated).
 

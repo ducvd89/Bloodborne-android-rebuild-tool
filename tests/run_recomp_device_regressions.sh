@@ -24,4 +24,10 @@ nice -n 19 "$tool" "${args[@]}" --emit-ll 0x21b8420 "$tmp/spin.ll" >/dev/null 2>
 if grep -q 'load volatile i32' "$tmp/spin.ll"; then
     echo "PASS spin-wait load volatile (+0x21b8420)"
 else echo "FAIL spin-wait load not volatile (+0x21b8420)"; fail=1; fi
+#  3. +0x20b55b0 (a game panic path: `call 0x20df920 ; movl $0xdeadba, 0x0`): the units must carry null_pointer_is_valid. Without it LLVM deletes the store to address 0
+#     as undefined behaviour and the call-return block before it, and the return from the print function became an unwind ("AOT: native code is missing an entry at +0x20b56d2").
+nice -n 19 "$tool" "${args[@]}" --emit-ll 0x20b55b0 "$tmp/panic.ll" >/dev/null 2>&1
+if grep -q 'store i32 14593466, ptr null' "$tmp/panic.ll" && grep -q 'null_pointer_is_valid' "$tmp/panic.ll"; then
+    echo "PASS null store after a call kept valid (null_pointer_is_valid, +0x20b55b0)"
+else echo "FAIL a store to address 0 after a call is undefined behaviour for LLVM (+0x20b55b0)"; fail=1; fi
 exit $fail

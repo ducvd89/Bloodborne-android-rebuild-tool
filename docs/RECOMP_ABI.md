@@ -295,6 +295,11 @@ variant, the `BB_AOT_FALLBACK_RANGES`, `BB_AOT_TRACE` fallback traces and the fr
     blocks, with `bbr_dispatch_tail` (the code above) as the default: an address that is not a case (a table the
     recogniser got wrong, or a computed target) still works, only slower. Registers and flags are not spilled on the switch
     edges (the case blocks are blocks of the same unit); the default edge spills as for any tail jump.
+- **Guest pointers may be null.** Every unit carries the LLVM function attribute `null_pointer_is_valid`. The game stores to address 0 on purpose after a panic
+  (`call <print routine> ; movl $0xdeadba, 0x0` in Dantelion2's DL_PANIC); without the attribute LLVM treats an access through a constant null pointer as undefined
+  behaviour and deletes the block, and with it the call-return block before it: the rip check after the call folds to "returned elsewhere", a normal return becomes
+  an unwind and the game stopped with a missing entry (`kind=unwind`) instead of faulting. With it such an access stays a load/store that faults at run time, as on the
+  PS4. Regression: `bb-recomp-asmtest --null-selftest`, `tests/run_recomp_device_regressions.sh` (case 3).
 - **`bbr_image_base`** is a `uint64_t` the loader sets after `dlopen`; every unit loads it once at entry
   (`!invariant.load`) and adds it to each image-relative address. Constants that are image addresses are
   recognised by value: `EntrypointOffset`, `InlineEntrypointOffset`, and a `Constant` inside the image

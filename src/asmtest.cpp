@@ -362,6 +362,64 @@ std::string runGranularTest(int opt) {
   return "PASS";
 }
 
+// A call whose return block touches address 0 (the game's panic: `call log ; movl $0xdeadba, 0x0`). LLVM treats an access through a constant null
+// pointer as undefined behaviour unless the function has `null_pointer_is_valid`; without it the block (and the call-return block before it) is
+// deleted, the rip check after the call folds to "returned elsewhere" and a normal return becomes an unwind: the unit returns at the call-return
+// address and the game stops with a missing entry. Each case must run the callee, return into the unit, and fault at the access (SIGSEGV).
+std::string runNullAccessTest(int opt) {
+  struct Case { const char* what; std::vector<uint8_t> code; };
+  const Case cases[] = {
+    // call f ; mov dword [0], 0xdeadba ; f: ret
+    {"store to a constant 0", {0xe8, 11, 0, 0, 0,  0xc7, 0x04, 0x25, 0, 0, 0, 0,  0xba, 0xad, 0xde, 0x00,  0xc3}},
+    // call f ; xor eax, eax ; mov dword [rax], 1 ; f: ret
+    {"store through a register that is 0", {0xe8, 8, 0, 0, 0,  0x31, 0xc0,  0xc7, 0x00, 1, 0, 0, 0,  0xc3}},
+    // call f ; mov rax, [0] ; hlt ; f: ret
+    {"load from a constant 0", {0xe8, 9, 0, 0, 0,  0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0,  0xf4,  0xc3}},
+  };
+  for (const Case& c : cases) {
+    mapFixed(0xe8000000 - PageSz, PageSz * 2);
+    mapFixed(CodeBase, PageSz);
+    memset((void*)CodeBase, 0xcc, PageSz);
+    memcpy((void*)CodeBase, c.code.data(), c.code.size());
+    static ElfImage img; img.base = 0;
+    LiftOptions lo; lo.gapUnits = false; lo.multiblock = true;
+    TargetSpec ts; ts.aarch64 = false; ts.opt = opt;
+    Jit jit(img, lo, ts);
+    g_jit = &jit;
+    const uint64_t hi = CodeBase + c.code.size();
+    // (the call-return address is not a place the dispatcher may compile from: the real runtime has no unit there either)
+    jit.rangeEnd = [hi](uint64_t t) -> uint64_t { return t >= CodeBase + 6 && t < hi ? hi : t == CodeBase ? hi : 0; };
+    if (!jit.err.empty()) return std::string("FAIL jit init: ") + jit.err;
+    alignas(64) static CPUState st;
+    static CPUState::gdt_segment gdt[32];
+    new (&st) CPUState();
+    st.segment_arrays[CPUState::SEGMENT_ARRAY_INDEX_GDT] = gdt;
+    st.segment_arrays[CPUState::SEGMENT_ARRAY_INDEX_LDT] = gdt;
+    st.cs_idx = CPUState::DEFAULT_USER_CS << 3;
+    auto* cs = CPUState::GetSegmentFromIndex(st, st.cs_idx);
+    CPUState::SetGDTBase(cs, 0); CPUState::SetGDTLimit(cs, 0xFFFFFu); cs->L = 1; cs->D = 0;
+    st.gregs[4] = 0xe8000000;
+    st.rip = CodeBase;
+    if (!jit.compile(CodeBase, hi)) return std::string("FAIL compile (") + c.what + "): " + jit.err + jit.liftFailure;
+    Jit::Fn entry = jit.find(CodeBase);
+    if (!entry) return "FAIL no entry";
+    struct sigaction sa {}; sa.sa_handler = jitOnSignal; sigemptyset(&sa.sa_mask); sa.sa_flags = SA_NODEFER | SA_ONSTACK;
+    static char altstack[1 << 16];
+    stack_t ss {}; ss.ss_sp = altstack; ss.ss_size = sizeof altstack; sigaltstack(&ss, nullptr);
+    for (int sg : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP}) sigaction(sg, &sa, nullptr);
+    alarm(20);
+    g_haltKind = 0; g_trapArg = 0;
+    if (sigsetjmp(g_halt, 1) == 0) {
+      entry(&st);
+      for (;;) Jit::dispatch(&st, st.rip);   // (what the runtime's outermost loop does with a unit that returned somewhere else)
+    }
+    alarm(0);
+    if (g_haltKind == 5) return std::string("FAIL ") + c.what + ": the unit returned at the call-return address " + hex(g_trapArg) + " instead of running it (the access to address 0 was deleted as undefined behaviour)";
+    if (g_haltKind != 4 || g_trapArg != SIGSEGV) return std::string("FAIL ") + c.what + ": expected a SIGSEGV at the access, got halt kind " + std::to_string(g_haltKind) + " arg " + hex(g_trapArg);
+  }
+  return "PASS";
+}
+
 // Hook slots (docs/RECOMP_ABI.md, "Hook slots"): at a hook site the unit tests bbr_hook_slot[k]; when set it spills the state, calls the slot and
 // acts on the result: 0 = run the instruction, 1 = rip set by the callback (a resume point of the site, or the dispatcher), 2 = the callback
 // returned from the function. The slot may be set and cleared while the code runs. Each case compiles its own unit set.
@@ -730,7 +788,7 @@ std::string runCpuidDiff() {
 int main(int argc, char** argv) {
   setpriority(PRIO_PROCESS, 0, 19);
   std::string fexDir = "out/recomp-fex", nasm = BBR_NASM, outFile = "out/recomp/asmtest.txt", filter;
-  int opt = 1; unsigned jobs = 22; bool verbose = false; bool listAll = false, resumeTest = false, hookTest = false, variantTest = false, granularTest = false, cpuidDiff = false;
+  int opt = 1; unsigned jobs = 22; bool verbose = false; bool listAll = false, resumeTest = false, hookTest = false, variantTest = false, granularTest = false, nullTest = false, cpuidDiff = false;
   for (int i = 1; i < argc; ++i) {
     auto is = [&](const char* s) { return !strcmp(argv[i], s); };
     auto arg = [&]() -> const char* { if (i + 1 >= argc) { fprintf(stderr, "missing argument\n"); exit(2); } return argv[++i]; };
@@ -746,6 +804,7 @@ int main(int argc, char** argv) {
     else if (is("--hook-selftest")) hookTest = true;
     else if (is("--granular-selftest")) granularTest = true;
     else if (is("--variant-selftest")) variantTest = true;
+    else if (is("--null-selftest")) nullTest = true;
     else if (is("--cpuid-diff")) cpuidDiff = true;
     else { fprintf(stderr, "usage: bb-recomp-asmtest [--fex <FEX tree>] [--nasm <nasm>] [--filter <substr>] [--out <file>] [--jobs n] [-O0|-O1|-O2] [-v]\n"); return 2; }
   }
@@ -773,6 +832,13 @@ int main(int argc, char** argv) {
     if (pid == 0) { const std::string v = runGranularTest(opt); puts(v.c_str()); fflush(stdout); _exit(v == "PASS" ? 0 : 1); }
     int st = 0; waitpid(pid, &st, 0);
     printf("granular entries self-test: %s\n", WIFEXITED(st) && WEXITSTATUS(st) == 0 ? "PASS" : "FAIL");
+    return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : 1;
+  }
+  if (nullTest) {
+    const pid_t pid = fork();
+    if (pid == 0) { const std::string v = runNullAccessTest(opt); puts(v.c_str()); fflush(stdout); _exit(v == "PASS" ? 0 : 1); }
+    int st = 0; waitpid(pid, &st, 0);
+    printf("null access self-test: %s\n", WIFEXITED(st) && WEXITSTATUS(st) == 0 ? "PASS" : "FAIL");
     return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : 1;
   }
   if (variantTest) {
