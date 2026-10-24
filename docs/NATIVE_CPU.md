@@ -27,7 +27,7 @@ The tool does everything in one go. You give it the folder with your game's PKG 
 ## What you need
 
 - **Your Bloodborne PKG files**, in one folder: the **base game** PKG and the **1.09 update** PKG (the same files the app's "Install from PKG"
-  uses). Any release works (CUSA00900, 00207, 00208, 00299, 01363, 03014, 03023, 03173, 03179). Only "fake" PKGs (made by a PS4 dump or
+  uses). Tested with CUSA03173; the other 1.09 releases (CUSA00900, 00207, 00208, 00299, 01363, 03014, 03023, 03179) should work but are untested. Only "fake" PKGs (made by a PS4 dump or
   by the usual tools) can be read; PKGs encrypted for a real console cannot. Put only these PKG files in that folder.
 - A **PC**: Windows 10 (1903 or newer) or 11, 64-bit; or Linux with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, Arch ... or
   newer). The processor needs AVX2 (an Intel Haswell from 2013, AMD Zen, or newer).
@@ -39,7 +39,7 @@ The tool does everything in one go. You give it the folder with your game's PKG 
 
 ## Windows
 
-1. Download `bb-recomp-windows-x86_64.zip` from the Releases page of
+1. Download `bb-recomp-windows-x86_64.zip` (no release is published yet; until then build it from source, see the README) from the Releases page of
    [github.com/ducvd89/Bloodborne-android-rebuild-tool](https://github.com/ducvd89/Bloodborne-android-rebuild-tool) and unzip it anywhere.
 2. Double-click **`bb-recomp.exe`**. Windows may say the program is unknown (it is not signed with a paid certificate): click **More info**,
    then **Run anyway**.
@@ -97,6 +97,8 @@ You can delete the PKG files afterwards if you like; the output folder is the wh
 yourself.
 
 ## On the phone
+
+You need an app version with the **Native CPU (recompiled)** menu (coming with the next app release).
 
 1. Copy the game folder (`CUSA03173`, with `aot` inside; copying the whole output folder works too) to the phone's storage or an SD card.
    A USB cable (file transfer mode), `adb push`, or a card reader all work. It is a big copy (the whole game).
