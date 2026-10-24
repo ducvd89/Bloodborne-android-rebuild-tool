@@ -75,8 +75,8 @@ bb-recomp --pkgs <folder with the PKGs> --out <output folder>
 On Linux the AppImage takes the same arguments (`./Bloodborne-Android-Rebuild-Tool-x86_64.AppImage --pkgs ... --out ...`). Add `--cli` first if
 you want to be sure no window opens. Other options: `--jobs N` (number of worker threads), `--mem-fraction 0.4` (use less of the free memory),
 `--keep-work` (keep the temporary folder `<out>/.bbwork`), `--help-player` (all options). If you already have the game as an **extracted
-folder** (a dump with `eboot.bin`), `--game <folder>` uses it instead of PKGs and writes only `libbbaot.so` and `libbbaot.json` into the
-output folder.
+folder** (a dump with `eboot.bin`), `--game <folder>` uses it instead of PKGs and writes only `libbbaot.so` and `libbbaot.json` into
+`<output folder>/aot/`: copy that `aot` folder next to `eboot.bin` in your game folder on the phone.
 
 The exit code is 0 when it finished and 1 when it did not; the reason is the last line it printed.
 
@@ -177,6 +177,5 @@ library does not cover a place the game jumped to. Copy `aot-misses.log` to the 
   AppImage, `package-windows.sh` the Windows zip (cross-compiled with llvm-mingw).
 - How the translated code runs and what the library contains: `docs/RECOMP_ABI.md`, `docs/STATIC_RECOMPILE_PLAN.md`.
 - The `.json` is written by `src/player.cpp`; the app reads it in `NativeCpu.java` (checks) and `NativeCpuDialog.java` (menu).
-  `bbport.ini` has `native_cpu=0` for off (a missing key or 1 is on); `run-bionic.sh` turns it into `BB_AOT=0`. A `BB_AOT` set by hand in
-  `bionic-local.sh` wins.
+  Since app 2.0.0 the native code is required: the app has no switch for it and no x86 emulator to fall back to.
 - The tool is free software (GPL-3.0-or-later). If you paid for it, you were scammed.

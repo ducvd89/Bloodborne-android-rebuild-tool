@@ -2,7 +2,7 @@
 // Player mode of bb-recomp: `bb-recomp --game <dump folder> [--out <dir>]`.
 //
 // One command, no other inputs. The player's own PS4 dump of Bloodborne (eboot.bin as a decrypted SELF, sce_module/*.prx,
-// sce_sys/param.sfo) goes in; libbbaot.so and libbbaot.json come out, to be copied to the phone (Native CPU in the app).
+// sce_sys/param.sfo) goes in; libbbaot.so and libbbaot.json come out, to be copied to the phone (the aot folder, next to eboot.bin).
 // Translated game code is derived from the game, so it is made here, on the player's machine, and never distributed.
 //
 // Steps: (1) check the folder, (2) build the same boot image the device's bb-prepare builds (shared/prepare/*.cpp are
@@ -108,7 +108,7 @@ void playerUsage() {
   fputs("bb-recomp: builds everything the phone needs for the native CPU from your own copy of Bloodborne.\n"
         "\n"
         "  bb-recomp --pkgs <folder with the game's PKG files> --out <output folder>\n"
-        "  bb-recomp --game <extracted game folder> [--out <dir>]     (an already extracted dump: only libbbaot.so and .json are written)\n"
+        "  bb-recomp --game <extracted game folder> [--out <dir>]     (an already extracted dump: only <dir>/aot/libbbaot.so and .json are written)\n"
         "\n"
         "  --pkgs <dir>       a folder holding Bloodborne's base game PKG and its update PKG(s) (1.09). They are unpacked, merged and\n"
         "                     compiled. The output folder then holds the game folder (CUSA03173, as the app expects it) with aot/ inside\n"
@@ -126,8 +126,10 @@ void playerUsage() {
         "                     Each becomes an entry of the library; rebuild with this when the app says a native entry is missing\n"
         "  --keep-work        keep the work folder (<out>/work: the game image and the object files)\n"
         "\n"
-        "It takes a few minutes and needs about 3 GB of free disk space while it works. Then copy libbbaot.so and libbbaot.json to\n"
-        "the phone and import them in the app: Menu -> Native CPU (recompiled) -> Import. See docs/NATIVE_CPU.md.\n", stdout);
+        "It takes a few minutes and needs about 3 GB of free disk space while it works. Then copy the game folder (or just its aot folder,\n"
+        "next to eboot.bin) to the phone and choose it as the game folder in the app (Menu -> Game folder): the app imports the native\n"
+        "code by itself. Importing libbbaot.so and libbbaot.json by hand (Menu -> Native CPU (recompiled) -> Import) also works.\n"
+        "See docs/NATIVE_CPU.md.\n", stdout);
 }
 
 // ---- a small ELF reader for the verification of the .so (an AArch64 shared object: it is never loaded here) ----
@@ -219,8 +221,9 @@ std::string readSo(const std::string& path, uint64_t imageSize, SoInfo& out) {
   return "";
 }
 
-// Where libbbaot.so and libbbaot.json go: aot/ inside the game folder made from PKGs (the app imports from there), else the output folder.
-fs::path fromPkgsDir(bool fromPkgs, const fs::path& game, const fs::path& out) { return fromPkgs ? game / "aot" : out; }
+// Where libbbaot.so and libbbaot.json go: an aot/ folder (the app imports it by itself from the aot folder next to eboot.bin): inside the
+// game folder made from PKGs, else inside the output folder.
+fs::path fromPkgsDir(bool fromPkgs, const fs::path& game, const fs::path& out) { return fromPkgs ? game / "aot" : out / "aot"; }
 
 std::string exeDirectory() {
   std::string d = bundleExeDir();
@@ -565,8 +568,10 @@ int playerMain(int argc, char** argv) {
          "  1. Copy the folder \"" << game.filename().string() << "\" to your phone's storage (internal storage or an SD card), for example into Download.\n"
          "     (Copying this whole folder, with this README, works too: the app finds the game folder inside.)\n"
          "  2. In the Bloodborne app, choose that folder as the game folder (Menu > Game folder).\n"
-         "  3. The app copies aot/libbbaot.so into its own files and turns the native CPU on by itself (Menu > Native CPU shows it).\n"
-         "     It only copies again when the files change. Restart the game after the first time.\n\n"
+         "  3. The app copies aot/libbbaot.so into its own files and imports it by itself when the game starts (Menu > Native CPU shows the state).\n"
+         "     It only copies again when the files change. Restart the game if it was already running.\n"
+         "     (Game already installed on the phone? Copy only the \"aot\" folder, next to eboot.bin in the game folder there.)\n"
+         "  Importing aot/libbbaot.so and aot/libbbaot.json by hand (Menu > Native CPU > Import) also works.\n\n"
          "These files are made from your own game and are for you only: do not share or upload them.\n"
          "Made by bb-recomp " << BBR_TOOL_VERSION << " on " << isoNow() << ".\n";
   }
@@ -575,14 +580,15 @@ int playerMain(int argc, char** argv) {
   if (fromPkgs) {
     printf("  %s\n  %s  (%.1f MB)\n\n", game.generic_string().c_str(), soOut.generic_string().c_str(), so.size / 1048576.0);
     printf("Copy the folder \"%s\" to your phone's storage and choose it as the game folder in the app (Menu > Game folder).\n"
-           "The app copies the native CPU files in by itself and switches it on; restart the game after the first time.\n"
+           "The app imports the native code (aot/libbbaot.so) by itself; restart the game if it was already running.\n"
+           "(Game already installed on the phone? Copy only the aot folder, next to eboot.bin.)\n"
            "These files are derived from your game: do not share them.\n", game.filename().string().c_str());
     if (g_machine) printf("@@DONE %s\n", game.generic_string().c_str());
   } else {
     printf("  %s  (%.1f MB)\n  %s\n\n", soOut.generic_string().c_str(), so.size / 1048576.0, jsonOut.generic_string().c_str());
-    printf("Copy BOTH files to your phone, then in the app: Menu -> Native CPU (recompiled) -> Import libbbaot.so..., pick them, and switch it on.\n"
-           "Or put the folder aot/ with both files inside your game folder: the app imports it by itself.\n"
-           "Restart the game to apply. These files are derived from your game: do not share them.\n");
+    printf("Copy the aot folder next to eboot.bin in your game folder on the phone; the app imports it by itself when you choose the game folder\n"
+           "(Menu > Game folder). Restart the game if it was already running.\n"
+           "Importing both files by hand (Menu > Native CPU (recompiled) > Import) also works. These files are derived from your game: do not share them.\n");
     if (g_machine) printf("@@DONE %s\n", out.generic_string().c_str());
   }
   return 0;
