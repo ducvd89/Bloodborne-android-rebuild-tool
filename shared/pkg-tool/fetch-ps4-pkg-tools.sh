@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Fetches the source of ps4-pkg-tools (https://github.com/xXJSONDeruloXx/ps4-pkg-tools, shadPS4's PKG/PFS code, GPL-2.0-or-later) at the pinned
-# commit, with the submodules the PKG tool needs (cryptopp, cryptopp-cmake, fmt), each at the commit that commit pins. Shallow, no history.
+# commit, with the submodules the PKG tool needs (cryptopp, cryptopp-cmake, fmt, zlib), each at the commit that commit pins. Shallow, no history.
 #   shared/pkg-tool/fetch-ps4-pkg-tools.sh [dest]        (default: .local-deps/src/ps4-pkg-tools; BB_PKG_TOOL_DEST also names it)
 # build_pkg_tool.sh calls this by itself when the source is missing. The result is unpatched: build_pkg_tool.sh applies patches/ to a copy.
-# A git submodule would also fetch tracy, toml11 and zlib (about 40 MB) that the tool does not use, so this script does it instead.
+# A git submodule would also fetch tracy and toml11 (about 30 MB) that the tool does not use, so this script does it instead.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 dest=${1:-${BB_PKG_TOOL_DEST:-$PWD/.local-deps/src/ps4-pkg-tools}}
 repo=${BB_PKG_TOOL_REPO:-https://github.com/xXJSONDeruloXx/ps4-pkg-tools}
 commit=45baedaa29b8da42b3c6fe912800d2fa4119834b
-need=(externals/cryptopp externals/cryptopp-cmake externals/fmt)
+need=(externals/cryptopp externals/cryptopp-cmake externals/fmt externals/zlib)   # zlib: only its headers are used (the build links the system zlib)
 
 if [[ ! -f $dest/CMakeLists.txt ]]; then
     rm -rf "$dest"; mkdir -p "$dest"

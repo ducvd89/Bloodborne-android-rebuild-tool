@@ -106,6 +106,7 @@ mkdir -p "$d/share/bb-recomp/variants" && cp variants/*.txt "$d/share/bb-recomp/
 cp out/windows/pkg-tool/ps4-pkg-tool.exe "$d/"
 fex=$(sed -n 's/^FEX_SOURCE_DIR:PATH=//p' out/recomp-win/CMakeCache.txt)
 [[ -f $fex/LICENSE ]] || fex=$(sed -n 's/^FEX_GIT_DIR:PATH=//p' out/recomp-win/CMakeCache.txt)
+[[ -f $fex/LICENSE ]] || fex=$root/out/recomp-fex   # the tree fetch-fex.sh prepared
 cp "$fex/LICENSE" "$d/licenses/FEX-MIT.txt"
 cp "$deps/llvm/LICENSE.TXT" "$d/licenses/LLVM-Apache-2.0-with-LLVM-exception.txt"
 cp helpers/NOTICE "$d/licenses/x87-helpers-NOTICE.txt"

@@ -24,7 +24,7 @@ struct CompileOptions {
   std::string llPath;            // --emit-ll: textual IR (<base>.NNN.ll per shard when shards > 1)
   std::string soPath;            // --so: link an Android ARM64 shared object
   std::string statsPath;         // where the summary is also written
-  std::string ndk = getenv("BB_NDK") ? getenv("BB_NDK") : ".local-deps/android/ndk/android-ndk-r29"; // Android NDK r29 (./fetch-ndk.sh), for --so
+  std::string ndk = getenv("BB_NDK") ? getenv("BB_NDK") : std::string(BBR_HELPERS_DIR) + "/../.local-deps/android/ndk/android-ndk-r29"; // Android NDK r29 (./fetch-ndk.sh), for --so
   std::string bundleDir;         // self-contained build: bundle directory (bundle.h); empty: the NDK and the system clang
   std::string helpersDir;        // the x87 helper sources (helpers); default: the directory compiled into the tool
   bool table = true;             // emit the unit table object

@@ -72,6 +72,7 @@ chmod 755 "$dist/usr/bin/"*
 lic=$dist/usr/share/licenses/bb-recomp
 fex=$(sed -n 's/^FEX_SOURCE_DIR:PATH=//p' out/recomp-linux/CMakeCache.txt)
 [[ -f $fex/LICENSE ]] || fex=$(sed -n 's/^FEX_GIT_DIR:PATH=//p' out/recomp-linux/CMakeCache.txt)
+[[ -f $fex/LICENSE ]] || fex=$root/out/recomp-fex   # the tree fetch-fex.sh prepared
 cp "$fex/LICENSE" "$lic/FEX-MIT.txt"
 cp "$deps/llvm/LICENSE.TXT" "$lic/LLVM-Apache-2.0-with-LLVM-exception.txt"
 cp helpers/NOTICE "$lic/x87-helpers-NOTICE.txt"

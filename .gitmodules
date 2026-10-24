@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # FEX-Emu 2609.1 (9fbdc00bd6401aff3b32d79e78ff98b8a13e4dcf). `git clone --recursive` leaves it empty on purpose (update = none): FEX's own
 # submodules hold about 150 MB of test binaries the tool does not use. The first configure runs fetch-fex.sh, which fetches the pinned
 # commit shallow with only the submodules the front end needs. `git submodule update --init --checkout third_party/FEX` makes a plain checkout.

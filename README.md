@@ -77,8 +77,9 @@ modify any checkout). A recursive clone leaves `third_party/FEX` empty on purpos
 submodules include about 150 MB of test binaries that the tool does not use. To use your own FEX
 checkout pass `-DFEX_GIT_DIR=<path>`, for a ready tree `-DFEX_SOURCE_DIR=<path>`.
 
-`bb-recomp --so` (writing the AArch64 library) uses the Android NDK r29: `./fetch-ndk.sh`, then `--ndk
-.local-deps/android/ndk/android-ndk-r29` (or set `BB_NDK`). The game image builder's sources are in
+`bb-recomp --so` and `--game`/`--pkgs` (which write the AArch64 library) use the Android NDK r29 in the developer
+build: run `./fetch-ndk.sh` once (it unpacks into `.local-deps/android/ndk/android-ndk-r29`, where the tool looks; `--ndk` or
+`BB_NDK` name another). The packages carry what they need from it. The game image builder's sources are in
 `shared/prepare` (the Android app builds the same files).
 
 Tests (the assembly tests need nasm, see [below](#nasm-for-the-assembly-tests)):
@@ -114,10 +115,12 @@ install), builds LLVM and LLD for mingw from source (about 12 minutes on 22 core
 ### nasm for the assembly tests
 
 ```
-mkdir -p .local-deps/nasm/dl && cd .local-deps/nasm/dl && curl -fsSLO https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz
-tar xf nasm-2.16.03.tar.xz -C .. && mkdir -p ../build && cd ../build
-nice -n 19 ../nasm-2.16.03/configure --prefix=$PWD/../install && nice -n 19 make -j22 install
+mkdir -p .local-deps/nasm && cd .local-deps/nasm && curl -fsSLO https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz
+tar xf nasm-2.16.03.tar.xz && cd nasm-2.16.03
+nice -n 19 ./configure --prefix=$PWD/../install && nice -n 19 make -j22 install && cd ../../..
 ```
+
+(`bb-recomp-asmtest` finds it at `.local-deps/nasm/install/bin/nasm`; `-DBB_RECOMP_NASM=<path>` or `--nasm <path>` name another.)
 
 ### Regenerating the variant catalogs
 
