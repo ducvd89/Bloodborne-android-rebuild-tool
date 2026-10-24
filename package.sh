@@ -126,6 +126,7 @@ fi
 mkdir -p out/dist
 rm -f "out/dist/$APPNAME"
 ARCH=x86_64 run "$appimagetool" --appimage-extract-and-run --no-appstream "$dist" "out/dist/$APPNAME" > out/appimagetool.log 2>&1 || { tail -20 out/appimagetool.log; exit 1; }
+(cd out/dist && sha256sum "$APPNAME" > "$APPNAME.sha256")  # the release uploads it next to the AppImage
 ls -l "out/dist/$APPNAME"
 echo "needs glibc: $(objdump -T "$dist/usr/bin/bb-recomp" "$dist/usr/bin/ps4-pkg-tool" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1) (or newer)"
 

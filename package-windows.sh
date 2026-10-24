@@ -135,6 +135,7 @@ with zipfile.ZipFile(z, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as f:
         for n in sorted(files):
             p = os.path.join(root, n); f.write(p, os.path.join(base, os.path.relpath(p, d)))
 PY
+(cd out/dist && sha256sum bb-recomp-windows-x86_64.zip > bb-recomp-windows-x86_64.zip.sha256)  # the release uploads it next to the zip
 ls -l out/dist/bb-recomp-windows-x86_64.zip
 
 if [[ -n $test_pkgs ]] && command -v wine >/dev/null; then
