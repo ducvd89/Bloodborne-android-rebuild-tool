@@ -5,16 +5,16 @@ This is a guide for players. It explains what the native CPU is, how to build it
 
 ## What it is
 
-Bloodborne is a PS4 game, so its code is written for an Intel-type (x86-64) processor. A phone has an ARM processor. Today the app
-translates the game's code **while you play** (this is what FEX does). That costs CPU time and battery, and it causes small stutters
-the first time the game runs a piece of code.
+Bloodborne is a PS4 game, so its code is written for an Intel-type (x86-64) processor. A phone has an ARM processor. Older versions of
+the app translated the game's code **while you play** (with the FEX emulator), which cost CPU time and battery and caused small stutters
+the first time the game ran a piece of code.
 
 The **native CPU** does that translation **once, before you play**, on your PC. The result is a file, `libbbaot.so`, which holds the whole
-game's code already translated to ARM. The app runs that file instead of translating while you play. Code that is not in the file (and
-code the game or a mod changes while running) still goes through the old translator, so nothing stops working.
+game's code already translated to ARM. Since app version 2.0.0 the game runs **only** from that file: there is no
+emulator in the app any more, so the game does not start without it (the app explains how to get it).
 
-It is **experimental**. It runs on the AYN Thor today, and the game has been seen to hang before the title screen once in a while with it
-on. If that happens, turn it off in the app (Menu > Native CPU, switch off). Please send a bug report (Menu > Report a problem) when it does.
+It is **new**: it has been tested on the AYN Thor (Snapdragon 8 Gen 2). If the game stops or misbehaves, please send a bug report
+(Menu > Report a problem).
 
 ## Why you build it yourself
 
@@ -98,24 +98,22 @@ yourself.
 
 ## On the phone
 
-You need an app version with the **Native CPU (recompiled)** menu (coming with the next app release).
+You need the app **2.0.0 or newer** (coming soon).
 
 1. Copy the game folder (`CUSA03173`, with `aot` inside; copying the whole output folder works too) to the phone's storage or an SD card.
    A USB cable (file transfer mode), `adb push`, or a card reader all work. It is a big copy (the whole game).
 2. In the app open the menu > **Game folder** and choose that folder.
 3. When the game starts, the app sees `aot/libbbaot.so` and `aot/libbbaot.json` in the game folder, checks them (the game, the version, the
    build's checksum and ABI version), **copies them into its own files** (a program cannot be run from shared storage, so the app needs its own
-   copy) and **switches the native CPU on**. It copies again only when the files in the game folder change.
-4. **Restart the game once** if it was already running. Menu > **Native CPU (recompiled)** shows the state: not installed, installed (which game
-   version, how many units, which tool version, and whether it matches this game), on or off.
+   copy). It copies again only when the files in the game folder change. There is nothing to switch on.
+4. **Restart the game once** if it was already running. Menu > **Native CPU (recompiled)** shows the state: **Ready**, not installed, or
+   built for another game version (with the game version, number of units and tool version).
 
 If you already installed the game on the phone with **Install from PKG**, you do not need to copy the game again: copy only the `aot` folder
 into the game's folder on the phone (it goes next to `eboot.bin`), then start the game.
 
 You can also import the two files by hand: Menu > Native CPU (recompiled) > **Import libbbaot.so...**, then select `libbbaot.so` and
 `libbbaot.json` together (or one after the other). The same checks apply.
-
-The switch in that menu turns it on and off (it applies when the game starts). With it off the game is translated while you play, as before.
 
 ## When to build it again
 
@@ -167,15 +165,11 @@ bytes shows up here).
 **The menu says "Installed, but unusable" or "not for this game"** - build again from the PKGs of the game you actually play, or choose the
 right game folder.
 
-**The menu says "Set by bionic-local.sh"** - the file `bionic-local.sh` in the app's folder sets `BB_AOT` by hand; that wins over the switch.
-Remove that line to use the switch.
-
 **The app reports a missing native entry** ("native code is missing an entry at +0x..."; the details are in `logs/aot-misses.log` in the app's folder) - the
 library does not cover a place the game jumped to. Copy `aot-misses.log` to the PC and rebuild with it: `bb-recomp --pkgs <PKG folder> --out <folder> --extra-entries aot-misses.log`
 (or `--game <dump> ...` the same way). Every address in the log becomes an entry of the new library. Please also send the log with a report.
 
-**The game hangs or crashes with it on** - turn it off (Menu > Native CPU), and send a report (Menu > Report a problem). The game runs as
-before without it.
+**The game hangs or crashes** - send a report (Menu > Report a problem); it includes the logs that show where it stopped.
 
 ## For developers
 

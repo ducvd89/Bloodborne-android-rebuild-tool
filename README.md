@@ -4,11 +4,12 @@
 A PC program (Windows and Linux) that turns **your own** Bloodborne PKG files into a ready-to-copy
 folder for the [Bloodborne Android port](https://github.com/ducvd89/Bloodborne-Android). It extracts
 the game and its update, and **recompiles the game's x86-64 code ahead of time into native ARM64
-code**, so the game runs as native code on the phone instead of through an x86 emulator (FEX).
+code**, so the game runs as native code on the phone. The Android port needs it: since version 2.0.0 the app has
+no x86 emulator.
 
-> **Status: experimental.** The recompiler works and the game reaches gameplay on an AYN Thor in
-> native mode; it has been seen to hang before the title screen once in a while. The window, the
-> command line and the Linux and Windows packages are done; the first release is coming.
+> **Status: new.** Since app version 2.0.0 the Android port runs the game only as native code built by
+> this tool (no emulator). Tested on an AYN Thor (Snapdragon 8 Gen 2): title, save load and gameplay.
+> The window, the command line and the Linux and Windows packages are done; the first release is coming.
 
 ## Why you build it yourself
 
@@ -31,7 +32,7 @@ minutes (mostly copying files).
 | **Game files** | Your own Bloodborne **base game PKG** and the **1.09 update PKG** (fake PKGs, the same files the app's "Install from PKG" uses), together in one folder with nothing else in it. Tested with **CUSA03173**; other releases of 1.09 should work but are untested. |
 | **PC** | Windows 10 (1903+) / 11, 64-bit, or Linux with glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36, Arch or newer). A processor with AVX2 (Intel 2013+ or any AMD Ryzen). |
 | **Memory / disk** | 8 GB free RAM (16 GB+ is faster). Free disk space: about the size of the base game PKG plus 3 GB. |
-| **Phone** | The Bloodborne Android app in a version with the **Native CPU** menu (coming with the next app release), and room for the game folder. |
+| **Phone** | The Bloodborne Android app **2.0.0 or newer** (coming soon; it needs this tool's output to run the game), and room for the game folder. |
 
 ### Step 1: Get the tool
 
@@ -88,16 +89,20 @@ Copy the game folder (`CUSA03173`, with `aot` inside) to the phone's storage or 
 **Game already installed on the phone?** You don't need to copy the game again. Copy only the `aot` folder
 into the phone's game folder, next to `eboot.bin`.
 
-### Step 4: Turn it on in the app
+### Step 4: Choose the folder in the app
+
+The app (version 2.0.0 or newer) runs the game **only** as this native code: without it, the game does
+not start and the app shows how to get it.
 
 1. Open the app's menu → **Game folder**, and choose the folder you copied.
-2. Start the game. The app finds `aot/libbbaot.so`, checks that it matches your game, copies it into its own
-   storage and switches **Native CPU** on. Restart the game once if it was already running.
-3. Menu → **Native CPU (recompiled)** shows the state (installed, matches this game, on or off), and has
-   the **On/Off** switch. It can also import `libbbaot.so` and `libbbaot.json` by hand.
+2. Start the game. The app finds `aot/libbbaot.so`, checks that it matches your game (game build, ABI
+   version, checksum) and copies it into its own storage. That's all: there is nothing to switch on.
+3. Menu → **Native CPU (recompiled)** shows the state (**Ready**, not installed, or built for another game
+   version) and can also import `libbbaot.so` and `libbbaot.json` by hand.
 
-If the game hangs or crashes with it on, switch it **off** there, and send a report (menu → **Report a
-problem**).
+If the game stops with a message about a **missing native entry**, the app saved the address in
+`aot-misses.log`: rebuild with `--extra-entries aot-misses.log` (see Common problems) and send a report
+(menu → **Report a problem**).
 
 ### When to build again
 
