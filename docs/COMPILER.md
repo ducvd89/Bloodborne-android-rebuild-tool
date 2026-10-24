@@ -57,12 +57,39 @@ from your PKGs (see the README):
     variants/gen_patchers.py    --main-repo M                              # patchers.txt + hooks-patchers.txt: runs the frame rate, display and guard patchers (needs the image)
     (each has --check: exit 1 when the catalog is out of date)
 
-Tests: `bb-recomp-asmtest --variant-selftest` (a patched function and a cave compiled as variants, run in the in-process JIT, hashes and alternatives checked),
+Tests: `bb-recomp-asmtest --cpuid-diff` (the native CPUID model of the FEX-free runtime, cpu/guest_cpu_cpuid.h, against FEXCore's own over every function and sub-leaf; only in the Bloodborne-Android tree), `bb-recomp-asmtest --granular-selftest` (a unit entered at every instruction boundary of a granular function, flags from the context, a non-boundary refused),
+`bb-recomp-asmtest --variant-selftest` (a patched function and a cave compiled as variants, run in the in-process JIT, hashes and alternatives checked),
 `bb-recomp-asmtest --hook-selftest` (a hook callback fires, edits registers, flags survive, resume points in the middle of a block and at block entries, return, dispatcher jump, loops),
 `tests/run_aot_patchers_test.sh` of the main project (the patchers' hook slot callbacks against the semantics of the stubs they replace), `tests/run_aot_variants_test.sh` (the runtime's classification of functions, redirects, un-dirtying and hook slots on synthetic tables) and `tests/run_guest_code_hooks_test.sh` (the shim's slot path).
 
+On the real image (the eboot ELF and `boot-linked.bin` that `--game <dump> --keep-work` leaves in `<out>/.bbwork/`, and the dump's `sce_module`; set `BB_ELF`, `BB_BOOT`,
+`BB_SCE_MODULE` or put them in `out/`): `tests/run_recomp_device_regressions.sh <sce_module>` (the two lowering fixes found on the Thor: a packed constant must not be
+relocated as an image address, a spin-wait load must be volatile) and `tests/run_aot_entries_check.sh` (the guest addresses the Thor logged as misses are covered by
+units or granular entries; `--extra-entries`, `--check-entries`, `--dump-units`, `--units-only`; about 2 s, no code generated).
+
 Sanitizers: `cmake ... -DBB_RECOMP_SANITIZE=address,undefined` builds the tool and the test tools with ASan and UBSan (FEXCore itself uncovered). Under ASan the default image base 0x200000000 and the tests'
 low fixed addresses lie in ASan's shadow gap: use `--base 200000000000` (bb-recomp), `--high-addresses` (bb-recomp-difftest) and `ASAN_OPTIONS=detect_leaks=0:protect_shadow_gap=0`.
+
+### Gaps: granular entries, the misses log, `--extra-entries` (phase 6: native only, no FEX fallback)
+
+The runtime logs every guest address no unit covers (`files/bbport/logs/aot-misses.log`) and, with `BB_AOT_STRICT=1` (always in the `BB_AOT_ONLY` runtime), stops there instead of
+running FEX (docs/RECOMP_ABI.md, "Misses, strict mode and the misses log"). The tool closes gaps in two ways:
+
+    --granular off|jumps|all   units of a granular function can be entered at every instruction boundary they hold (dynamic jump targets inside a function). Default `jumps`: the
+                               functions with a table-like indirect jump the lifter could not resolve for sure; --granular-funcs <file> adds more
+    --extra-entries <file>     addresses to make unit entries: a misses log as it is, or one hex address per line
+
+The loop for a tester's report: take the `miss +0x...` lines of `aot-misses.log`, rebuild with them, redeploy the `.so`:
+
+    nice -n 19 out/recomp-build/bb-recomp --elf out/eboot.elf --boot out/boot-linked.bin --prx-dir <game>/sce_module --target aarch64 --so out/aot/libbbaot.so -O1 \
+        --variants variants --extra-entries aot-misses.log --ndk <ndk>      # prints how many addresses were new units, mid-function units, or rejected
+
+and to check a list without compiling (about 2 s):
+
+    out/recomp-build/bb-recomp --elf out/eboot.elf --boot out/boot-linked.bin --prx-dir <game>/sce_module --units-only --extra-entries aot-misses.log \
+        --check-entries 20,210ebc0,23a9c9c --dump-units out/units.txt     # each address: unit entry | granular entry | case of a resolved jump table | NOT COVERED (exit status 3)
+
+`--dump-units` writes the unit table (`unit <entry> <end> <extra> <function> <granular>`), the granular functions and the weak (unresolved or only scanned) indirect jumps with the reason.
 
 ### The runtime's image: eboot + linked modules, discovery, secondary entries
 

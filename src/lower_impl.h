@@ -74,12 +74,21 @@ struct Lower {
 
   std::vector<Value*> val;               // node id -> value (i64 for GPR nodes, <2 x i64> for FPR nodes)
   std::vector<llvm::AllocaInst*> var;    // node id -> alloca, for RMWHandle/Allocate* nodes that ops update in place
+  // Granular units can be entered at any block entry or split from the unit's entry switch, which bypasses every other block: an SSA value is only
+  // good in the region (IR block, between two splits) it was defined in. A use from another region reads the value from an alloca that the definition
+  // stores to (made on first need): mem2reg turns it back into phis, undefined on the switch edges.
+  bool granularUnit = false;
+  uint32_t curRegion = 0;
+  std::vector<uint32_t> regionOf;        // node id -> region of its definition
+  std::vector<llvm::AllocaInst*> slotOf; // node id -> the alloca holding a value that is used from another region
   std::unordered_map<uint32_t, llvm::BasicBlock*> bbOf; // CodeBlock node id -> block
   llvm::AllocaInst *gpr[NumStaticGPR] = {}, *xmm[NumStaticFPR] = {};
   bool gprUsed[NumStaticGPR] = {}, gprWritten[NumStaticGPR] = {}, xmmUsed[NumStaticFPR] = {}, xmmWritten[NumStaticFPR] = {};
   bool flagsRead = false, flagsWritten = false;
   llvm::AllocaInst *fN = nullptr, *fZ = nullptr, *fC = nullptr, *fV = nullptr;
   FlagDesc fd;
+  std::set<uint32_t> quietLoop;             // blocks of loops with no guest store, atomic, fence or exit: their guest loads are volatile
+  uint32_t curBlock = ~0u;                  // the IR block being emitted
   uint64_t dirty = 0;                       // static registers (bit g: GPR g, bit 18+x: XMM x) that differ from the context
   std::unordered_map<uint32_t, uint64_t> dirtyIn; // per block, from the dataflow in run()
   uint32_t curGuest = 0;       // offset of the current guest instruction from the entry (GuestOpcode)

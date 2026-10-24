@@ -120,6 +120,7 @@ A new phone does not need a new build: copy the same game folder to it.
 | Out of memory / the PC freezes | Close other programs, or use the terminal with `--jobs 4 --mem-fraction 0.4`. |
 | *Illegal instruction* | The processor has no AVX2. |
 | App: *not for this game* / *other ABI version* | Rebuild from the PKGs of the game you play, with the tool release matching your app. |
+| App: a missing native entry ("native code is missing an entry at +0x…", details in `logs/aot-misses.log`) | The library does not cover a place the game jumped to. Copy `aot-misses.log` to the PC and rebuild with it: `bb-recomp --pkgs <PKG folder> --out <folder> --extra-entries aot-misses.log` (or `--game <dump>`). Every logged address becomes an entry of the new library. |
 
 The full reference, with every message and the details of each step, is [docs/NATIVE_CPU.md](docs/NATIVE_CPU.md).
 
