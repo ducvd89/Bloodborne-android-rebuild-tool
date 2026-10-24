@@ -1,0 +1,30 @@
+SPDX-License-Identifier: GPL-2.0-or-later
+bb: use the system zlib (find_package) instead of the zlib submodule; the build scripts point the include at the right zlib.h.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 33e5833..499bc77 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -26,7 +26,8 @@ endif()
+ # Use zlib from submodule (needed for PFSC decompression)
+ set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "Build zlib examples" FORCE)
+ set(ZLIB_BUILD_TESTS OFF CACHE BOOL "Build zlib tests" FORCE)
+-add_subdirectory(${CMAKE_SOURCE_DIR}/externals/zlib EXCLUDE_FROM_ALL)
++find_package(ZLIB REQUIRED)
++add_library(zlibstatic ALIAS ZLIB::ZLIB)
+ 
+ # Configure cryptopp from submodule (RSA/AES/HMAC)
+ set(CRYPTOPP_BUILD_TESTING OFF CACHE BOOL "Build cryptopp tests")
+diff --git a/src/core/file_format/pkg.cpp b/src/core/file_format/pkg.cpp
+index 01a5a2c..29f0b45 100644
+--- a/src/core/file_format/pkg.cpp
++++ b/src/core/file_format/pkg.cpp
+@@ -1,7 +1,7 @@
+ // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+-#include "zlib/zlib.h"
++#include </usr/include/zlib.h>
+ #include "common/io_file.h"
+ #include "core/file_format/pkg.h"
+ #include "core/file_format/pkg_type.h"

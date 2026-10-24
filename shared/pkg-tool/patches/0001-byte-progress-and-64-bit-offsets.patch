@@ -1,0 +1,165 @@
+SPDX-License-Identifier: GPL-2.0-or-later
+bb: byte progress ('Progress-bytes: <done> <total>') for ps4-pkg-tool, 64-bit sizes/offsets
+(the original keeps int offsets/sizes: wrong for PFS data beyond 2 GiB, i.e. multi-GB game PKGs),
+and refusal of file names that could leave the output folder.
+
+--- a/src/core/file_format/pkg.cpp
++++ b/src/core/file_format/pkg.cpp
+@@ -2,10 +2,40 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include </usr/include/zlib.h>
++#include <cstdio>
+ #include "common/io_file.h"
+ #include "core/file_format/pkg.h"
+ #include "core/file_format/pkg_type.h"
+ 
++// bb-pkg-tool: byte progress for the app ("Progress-bytes: <done> <total>", every 32 MiB and at the
++// end), the file bytes still to extract (PKG::GetTotalFileBytes) and 64-bit offsets/sizes.
++static u64 g_bytes_total = 0;
++static u64 g_bytes_done = 0;
++static u64 g_bytes_reported = 0;
++static constexpr u64 ProgressStep = 32ull << 20;
++
++void PkgReportBytes(bool force) {
++    if (force || g_bytes_done - g_bytes_reported >= ProgressStep) {
++        g_bytes_reported = g_bytes_done;
++        std::printf("Progress-bytes: %llu %llu\n", static_cast<unsigned long long>(g_bytes_done),
++                    static_cast<unsigned long long>(g_bytes_total));
++        std::fflush(stdout);
++    }
++}
++
++u64 PKG::GetTotalFileBytes(const std::vector<int>& indices) {
++    u64 total = 0;
++    for (int idx : indices) {
++        if (fsTable[idx].type == PFS_FILE) {
++            total += static_cast<u64>(iNodeBuf[fsTable[idx].inode].Size);
++        }
++    }
++    g_bytes_total = total;
++    g_bytes_done = 0;
++    g_bytes_reported = 0;
++    return total;
++}
++
+ static void DecompressPFSC(std::span<char> compressed_data, std::span<char> decompressed_data) {
+     z_stream decompressStream;
+     decompressStream.zalloc = Z_NULL;
+@@ -380,6 +410,14 @@
+                 table.inode = dirent.ino;
+                 table.type = dirent.type;
+ 
++                // A name that could leave the output folder ends the extraction.
++                if ((table.type == PFS_FILE || table.type == PFS_DIR) &&
++                    (table.name.empty() || table.name == "." || table.name == ".." ||
++                     table.name.find_first_of("/\\") != std::string::npos)) {
++                    failreason = "Unsafe file name in PKG";
++                    return false;
++                }
++
+                 if (table.type == PFS_CURRENT_DIR) {
+                     current_dir = extractPaths[table.inode];
+                 }
+@@ -408,9 +446,9 @@
+     std::string inode_name = fsTable[index].name;
+ 
+     if (inode_type == PFS_FILE) {
+-        int sector_loc = iNodeBuf[inode_number].loc;
+-        int nblocks = iNodeBuf[inode_number].Blocks;
+-        int bsize = iNodeBuf[inode_number].Size;
++        u64 sector_loc = iNodeBuf[inode_number].loc;
++        u64 nblocks = iNodeBuf[inode_number].Blocks;
++        s64 bsize = iNodeBuf[inode_number].Size;
+ 
+         Common::FS::IOFile inflated;
+         inflated.Open(extractPaths[inode_number], Common::FS::FileAccessMode::Write);
+@@ -418,7 +456,7 @@
+         Common::FS::IOFile pkgFile; // Open the file for each iteration to avoid conflict.
+         pkgFile.Open(pkgpath, Common::FS::FileAccessMode::Read);
+ 
+-        int size_decompressed = 0;
++        s64 size_decompressed = 0;
+         std::vector<char> compressedData;
+         std::vector<char> decompressedData(0x10000);
+ 
+@@ -426,7 +464,7 @@
+         std::vector<u8> pfsc(pfsc_buf_size);
+         std::vector<u8> pfs_decrypted(pfsc_buf_size);
+ 
+-        for (int j = 0; j < nblocks; j++) {
++        for (u64 j = 0; j < nblocks; j++) {
+             u64 sectorOffset =
+                 sectorMap[sector_loc + j]; // offset into PFSC_image and not pfs_image.
+             u64 sectorSize = sectorMap[sector_loc + j + 1] -
+@@ -435,8 +473,8 @@
+             u64 currentSector1 =
+                 (pfsc_offset + sectorOffset) / 0x1000; // block size is 0x1000 for xts decryption.
+ 
+-            int sectorOffsetMask = (sectorOffset + pfsc_offset) & 0xFFFFF000;
+-            int previousData = (sectorOffset + pfsc_offset) - sectorOffsetMask;
++            const u64 sectorOffsetMask = (sectorOffset + pfsc_offset) & ~0xFFFull;
++            const u64 previousData = (sectorOffset + pfsc_offset) - sectorOffsetMask;
+ 
+             pkgFile.Seek(fileOffset - previousData);
+             pkgFile.Read(pfsc);
+@@ -453,13 +491,17 @@
+ 
+             size_decompressed += 0x10000;
+ 
++            u64 written;
+             if (j < nblocks - 1) {
+-                inflated.WriteRaw<u8>(decompressedData.data(), decompressedData.size());
++                written = decompressedData.size();
++                inflated.WriteRaw<u8>(decompressedData.data(), written);
+             } else {
+                 // This is to remove the zeros at the end of the file.
+-                const u32 write_size = decompressedData.size() - (size_decompressed - bsize);
+-                inflated.WriteRaw<u8>(decompressedData.data(), write_size);
++                written = decompressedData.size() - static_cast<u64>(size_decompressed - bsize);
++                inflated.WriteRaw<u8>(decompressedData.data(), written);
+             }
++            g_bytes_done += written;
++            PkgReportBytes(false);
+         }
+         pkgFile.Close();
+         inflated.Close();
+--- a/src/core/file_format/pkg.h
++++ b/src/core/file_format/pkg.h
+@@ -97,6 +97,8 @@
+ };
+ static_assert(sizeof(PKGEntry) == 32);
+ 
++void PkgReportBytes(bool force);
++
+ class PKG {
+ public:
+     PKG();
+@@ -104,6 +106,8 @@
+ 
+     bool Open(const std::filesystem::path& filepath, std::string& failreason);
+     void ExtractFiles(const int index);
++    // Bytes of the files `indices` will write (bb-pkg-tool progress).
++    u64 GetTotalFileBytes(const std::vector<int>& indices);
+     bool Extract(const std::filesystem::path& filepath, const std::filesystem::path& extract,
+                  std::string& failreason);
+ 
+--- a/src/pkg_tool/lib.cpp
++++ b/src/pkg_tool/lib.cpp
+@@ -48,6 +48,8 @@
+         for (uint32_t i = 0; i < total; ++i) list.push_back(static_cast<int>(i));
+     }
+ 
++    pkg.GetTotalFileBytes(list);
++    PkgReportBytes(true);
+     uint32_t extracted = 0;
+     for (int idx : list) {
+         try {
+@@ -60,6 +62,7 @@
+         ++extracted;
+         if (progress_cb) progress_cb(extracted, list.size());
+     }
++    PkgReportBytes(true);
+     return std::nullopt;
+ }
+ 

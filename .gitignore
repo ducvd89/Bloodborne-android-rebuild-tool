@@ -1,0 +1,22 @@
+# build products and downloaded dependencies
+out/
+.local-deps/
+build/
+build-*/
+cmake-build-*/
+__pycache__/
+*.pyc
+# never commit anything made from the game: PKGs, extracted files, boot/eboot images, recompiled libraries
+*.pkg
+*.so
+*.o
+*.a
+*.exe
+*.AppImage
+*.zip
+*.elf
+eboot.bin
+boot-linked.bin
+content.bin
+libbbaot.*
+*.log

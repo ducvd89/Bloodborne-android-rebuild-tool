@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Additional terms (GNU GPL version 3, section 7)
 
 Bloodborne Android Rebuild Tool is free software: you can redistribute it and/or modify it under the
