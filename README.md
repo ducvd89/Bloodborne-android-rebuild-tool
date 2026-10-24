@@ -7,7 +7,7 @@ the game and its update, and **recompiles the game's x86-64 code ahead of time i
 code**, so the game runs as native code on the phone. The Android port needs it: since version 2.0.0 the app has
 no x86 emulator.
 
-> **Status: version 1.0.0.** Since app version 2.0.0 Beta 1 the Android port runs the game only as native code built by
+> **Status: version 1.1.0.** Since app version 2.0.0 Beta 1 the Android port runs the game only as native code built by
 > this tool (no emulator). Tested on an AYN Thor (Snapdragon 8 Gen 2): title, save load and gameplay.
 > The window, the command line and the Linux and Windows packages are released; the native code format
 > (ABI version 1) matches Bloodborne Android 2.0.0 Beta 1.

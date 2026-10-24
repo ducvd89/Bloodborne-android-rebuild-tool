@@ -21,7 +21,7 @@ while (( $# )); do
 done
 J=${BB_JOBS:-22}
 run() { nice -n 19 "$@"; }
-VERSION=${BB_RECOMP_VERSION:-1.0.0}
+VERSION=${BB_RECOMP_VERSION:-1.1.0}
 LLVM_VER=${BB_LLVM_VERSION:-23.1.3}
 MINGW_TAG=${BB_LLVM_MINGW_TAG:-20261020}
 deps=${BB_RECOMP_DEPS:-$root/.local-deps}
