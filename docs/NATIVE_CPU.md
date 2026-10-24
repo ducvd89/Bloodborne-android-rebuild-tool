@@ -43,7 +43,9 @@ The tool does everything in one go. You give it the folder with your game's PKG 
    [github.com/ducvd89/Bloodborne-android-rebuild-tool](https://github.com/ducvd89/Bloodborne-android-rebuild-tool) and unzip it anywhere.
 2. Double-click **`bb-recomp.exe`**. Windows may say the program is unknown (it is not signed with a paid certificate): click **More info**,
    then **Run anyway**.
-3. **Game PKG folder**: press **Browse...** and choose the folder with the base game PKG and the 1.09 update PKG.
+3. **From PKG files**: press **Browse...** and choose the folder with the base game PKG and the 1.09 update PKG. If you already have the game
+   as an extracted folder, choose **From an extracted game** and pick the folder with `eboot.bin` (or press **eboot.bin...** and pick the file);
+   only an `aot` folder is built, to copy next to `eboot.bin` on the phone.
 4. **Output folder**: press **Browse...** and choose where to put the result (an empty folder, or one that does not exist yet, on a disk
    with enough space).
 5. Press **Build**. The bar shows the stage (finding the PKGs, checking them for damage, extracting, preparing, recompiling N/M shards, linking,
@@ -75,7 +77,7 @@ bb-recomp --pkgs <folder with the PKGs> --out <output folder>
 On Linux the AppImage takes the same arguments (`./Bloodborne-Android-Rebuild-Tool-x86_64.AppImage --pkgs ... --out ...`). Add `--cli` first if
 you want to be sure no window opens. Other options: `--jobs N` (number of worker threads), `--mem-fraction 0.4` (use less of the free memory),
 `--keep-work` (keep the temporary folder `<out>/.bbwork`), `--help-player` (all options). If you already have the game as an **extracted
-folder** (a dump with `eboot.bin`), `--game <folder>` uses it instead of PKGs and writes only `libbbaot.so` and `libbbaot.json` into
+folder** (a dump with `eboot.bin`), `--game <folder>` (or the path of its `eboot.bin`) uses it instead of PKGs and writes only `libbbaot.so` and `libbbaot.json` into
 `<output folder>/aot/`: copy that `aot` folder next to `eboot.bin` in your game folder on the phone.
 
 The exit code is 0 when it finished and 1 when it did not; the reason is the last line it printed.

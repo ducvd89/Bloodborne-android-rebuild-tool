@@ -53,7 +53,9 @@ It is free. If you paid for it, you were scammed.
      **More info → Run anyway** (the tool is not signed with a paid certificate).
    - **Linux:** double-click the AppImage. If nothing happens, your system lacks FUSE 2: run it from a terminal
      with `./Bloodborne-Android-Rebuild-Tool-x86_64.AppImage --appimage-extract-and-run`.
-2. **Game PKG folder → Browse…**: choose the folder with the base game PKG and the 1.09 update PKG.
+2. **From PKG files → Browse…**: choose the folder with the base game PKG and the 1.09 update PKG. Already have the game
+   extracted? Pick **From an extracted game** instead and choose the folder with `eboot.bin` (or `eboot.bin…` to pick the file itself):
+   only the `aot` folder is built, to copy next to `eboot.bin` on the phone.
 3. **Output folder → Browse…**: choose an empty folder on a disk with enough space (a short path such as
    `D:\bloodborne` or `~/bloodborne` is best).
 4. Press **Build** and wait. The progress bar shows each stage:

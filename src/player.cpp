@@ -108,12 +108,12 @@ void playerUsage() {
   fputs("bb-recomp: builds everything the phone needs for the native CPU from your own copy of Bloodborne.\n"
         "\n"
         "  bb-recomp --pkgs <folder with the game's PKG files> --out <output folder>\n"
-        "  bb-recomp --game <extracted game folder> [--out <dir>]     (an already extracted dump: only <dir>/aot/libbbaot.so and .json are written)\n"
+        "  bb-recomp --game <extracted game folder or its eboot.bin> [--out <dir>]     (an already extracted dump: only <dir>/aot/libbbaot.so and .json are written)\n"
         "\n"
         "  --pkgs <dir>       a folder holding Bloodborne's base game PKG and its update PKG(s) (1.09). They are unpacked, merged and\n"
         "                     compiled. The output folder then holds the game folder (CUSA03173, as the app expects it) with aot/ inside\n"
         "                     and a README.txt: copy it to the phone and choose it as the game folder in the app\n"
-        "  --game <dir>       the PS4 dump of Bloodborne with update 1.09 merged in: the folder that holds eboot.bin, sce_module/\n"
+        "  --game <dir>       (or the path of its eboot.bin) the PS4 dump of Bloodborne with update 1.09 merged in: the folder that holds eboot.bin, sce_module/\n"
         "                     and sce_sys/ (e.g. CUSA03173). Nothing in it is changed\n"
         "  --out <dir>        the output folder (default: ./bb-recomp-out)\n"
         "  --pkg-tool <file>  ps4-pkg-tool (default: next to this program)\n"
@@ -407,6 +407,10 @@ int playerMain(int argc, char** argv) {
   } else {
     step("check", "Checking the game folder");
     game = fs::absolute(gameArg, ec);
+    if (fs::is_regular_file(game, ec)) {  // the eboot.bin itself: its folder is the game
+      std::string n = game.filename().string(); for (auto& c : n) c = (char)tolower((unsigned char)c);
+      if (n == "eboot.bin") game = game.parent_path();
+    }
     if (!fs::is_directory(game)) { cleanup(); die("the game folder " + gameArg + " does not exist."); }
   }
   const char* needed[] = {"eboot.bin", "sce_module/libc.prx", "sce_module/libSceFios2.prx", "sce_sys/param.sfo"};

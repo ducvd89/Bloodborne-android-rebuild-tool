@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The Bloodborne Android Rebuild Tool's window (Dear ImGui on SDL3): two folders, Build, a progress bar and a log. It does not do the work
-// itself: it starts this same program as `bb-recomp --pkgs <dir> --out <dir> --machine` and follows the "@@" lines it prints (player.cpp),
+// The Bloodborne Android Rebuild Tool's window (Dear ImGui on SDL3): two folders (or the game folder), Build, a progress bar and a log. It does not do the work
+// itself: it starts this same program as `bb-recomp --pkgs <dir> --out <dir> --machine` (or `--game <dir>`) and follows the "@@" lines it prints (player.cpp),
 // so Cancel simply stops that process, and a crash in the build cannot take the window down.
 #include "gui.h"
 
@@ -62,10 +62,12 @@ struct State {
   bool logDirty = false;
 } g;
 
-char g_pkgs[2048] = "", g_out[2048] = "";
+char g_pkgs[2048] = "", g_game[2048] = "", g_out[2048] = "";
+bool g_gameMode = false;  // the source: an extracted game (eboot.bin) instead of PKG files
+bool g_builtGame = false;  // the source of the last build (the radios can change after it)
 std::mutex g_pickMu;
-std::string g_picked[2];  // a folder chosen in the system dialog, handed to the UI thread
-bool g_pickedSet[2] = {false, false};
+std::string g_picked[3];  // a folder chosen in the system dialog, handed to the UI thread
+bool g_pickedSet[3] = {false, false, false};
 bool g_aboutOpen = false;
 
 void addLog(const std::string& line) {
@@ -113,10 +115,11 @@ void startBuild() {
     g.log.clear(); g.stageId = "check"; g.stageText = "Starting…"; g.done = g.total = 0; g.error.clear(); g.resultFolder.clear();
     g.running = true; g.finished = g.failed = g.cancelled = false; g.cancel = false; g.started = std::chrono::steady_clock::now();
   }
-  const std::string pkgs = g_pkgs, out = g_out;
-  g.worker = std::thread([pkgs, out] {
+  g_builtGame = g_gameMode;
+  const std::string pkgs = g_gameMode ? g_game : g_pkgs, out = g_out, flag = g_gameMode ? "--game" : "--pkgs";
+  g.worker = std::thread([pkgs, out, flag] {
     std::string err;
-    int code = runProcess({selfPath(), "--pkgs", pkgs, "--out", out, "--machine"}, onLine, [] { return g.cancel.load(); }, err, true);
+    int code = runProcess({selfPath(), flag, pkgs, "--out", out, "--machine"}, onLine, [] { return g.cancel.load(); }, err, true);
     std::lock_guard<std::mutex> l(g.mu);
     g.running = false; g.finished = true;
     if (g.cancel) { g.cancelled = true; g.failed = true; }
@@ -131,10 +134,14 @@ void folderCallback(void* user, const char* const* list, int) {
   g_picked[which] = list[0]; g_pickedSet[which] = true;
 }
 
+// A PKG-only stage: the game-folder build does not run it.
+bool pkgOnly(const char* id) { return !strcmp(id, "pkgcheck") || !strcmp(id, "extract") || !strcmp(id, "merge"); }
+
 float overallFraction(const std::string& stage, uint64_t done, uint64_t total) {
   float acc = 0, sum = 0;
-  for (auto& s : kStages) sum += s.weight;
+  for (auto& s : kStages) if (!(g_builtGame && pkgOnly(s.id))) sum += s.weight;
   for (auto& s : kStages) {
+    if (g_builtGame && pkgOnly(s.id)) continue;
     if (stage == s.id) { acc += s.weight * (total ? (float)done / (float)total : 0.f); break; }
     acc += s.weight;
   }
@@ -143,6 +150,7 @@ float overallFraction(const std::string& stage, uint64_t done, uint64_t total) {
 
 std::string stageLabel(const std::string& id, const std::string& text, uint64_t done, uint64_t total, const std::string& status) {
   char b[256];
+  if (g_builtGame && id == "check") return "Checking the game folder";
   if (id == "pkgcheck") return !status.empty() ? status : text.empty() ? "Checking the PKGs" : text;
   if (id == "extract" && total) { snprintf(b, sizeof b, "Extracting: %.1f of %.1f GB", done / 1073741824.0, total / 1073741824.0); return b; }
   if (id == "compile" && total) { snprintf(b, sizeof b, "Recompiling: %" PRIu64 " / %" PRIu64 " shards", std::min(done + 1, total), total); return b; }
@@ -201,15 +209,21 @@ void aboutWindow() {
 }
 
 // One path row: a label, the editable path and a Browse button (the system folder dialog; typing a path works where none exists).
-void pathRow(const char* label, const char* id, char* buf, size_t size, int which, SDL_Window* win, bool enabled) {
-  ImGui::TextUnformatted(label);
+void pathRow(const char* label, const char* id, char* buf, size_t size, int which, SDL_Window* win, bool enabled, bool ebootButton = false) {
+  if (label) ImGui::TextUnformatted(label);
   ImGui::BeginDisabled(!enabled);
-  float button = ImGui::CalcTextSize("Browse...").x + ImGui::GetStyle().FramePadding.x * 2 + 8;
-  ImGui::SetNextItemWidth(-button - ImGui::GetStyle().ItemSpacing.x);
+  const float pad = ImGui::GetStyle().FramePadding.x * 2 + 8, gap = ImGui::GetStyle().ItemSpacing.x;
+  float button = ImGui::CalcTextSize("Browse...").x + pad + (ebootButton ? ImGui::CalcTextSize("eboot.bin...").x + pad + gap : 0.f);
+  ImGui::SetNextItemWidth(-button - gap);
   ImGui::InputText(id, buf, size);
   ImGui::SameLine();
   std::string bid = std::string("Browse...##") + id;
   if (ImGui::Button(bid.c_str())) SDL_ShowOpenFolderDialog(folderCallback, (void*)(intptr_t)which, win, buf[0] ? buf : nullptr, false);
+  if (ebootButton) {  // pick the eboot.bin file itself (the build takes its folder)
+    ImGui::SameLine();
+    static const SDL_DialogFileFilter filters[] = {{"eboot.bin", "bin"}, {"All files", "*"}};
+    if (ImGui::Button("eboot.bin...")) SDL_ShowOpenFileDialog(folderCallback, (void*)(intptr_t)which, win, filters, 2, buf[0] ? buf : nullptr, false);
+  }
   ImGui::EndDisabled();
 }
 
@@ -225,6 +239,7 @@ void frame(SDL_Window* win) {
   {
     std::lock_guard<std::mutex> l(g_pickMu);
     if (g_pickedSet[0]) { snprintf(g_pkgs, sizeof g_pkgs, "%s", g_picked[0].c_str()); g_pickedSet[0] = false; }
+    if (g_pickedSet[2]) { snprintf(g_game, sizeof g_game, "%s", g_picked[2].c_str()); g_pickedSet[2] = false; }
     if (g_pickedSet[1]) { snprintf(g_out, sizeof g_out, "%s", g_picked[1].c_str()); g_pickedSet[1] = false; }
   }
   ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -234,7 +249,8 @@ void frame(SDL_Window* win) {
   ImGui::TextColored(ImVec4(0.776f, 0.678f, 0.463f, 1.f), "%s", kTitle);
   ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize("About").x - ImGui::GetStyle().FramePadding.x * 2 - ImGui::GetStyle().WindowPadding.x);
   if (ImGui::Button("About")) g_aboutOpen = true;
-  ImGui::TextWrapped("Builds the folder to copy to your phone: your Bloodborne game (unpacked from your PKG files) with the game's code compiled for the native CPU.");
+  ImGui::TextWrapped(g_gameMode ? "Compiles your Bloodborne game's code for the native CPU: gives the \"aot\" folder to put next to the game's eboot.bin on your phone."
+                                : "Builds the folder to copy to your phone: your Bloodborne game (unpacked from your PKG files) with the game's code compiled for the native CPU.");
   ImGui::Separator();
 
   bool running, finished, failed, cancelled;
@@ -247,14 +263,23 @@ void frame(SDL_Window* win) {
     lines.assign(g.log.end() - std::min<size_t>(g.log.size(), 1200), g.log.end()); follow = g.logDirty; g.logDirty = false;
   }
 
-  pathRow("Game PKG folder  (the base game PKG and the 1.09 update PKG)", "##pkgs", g_pkgs, sizeof g_pkgs, 0, win, !running);
+  // Both sources stay on screen, each under its own radio button; the row of the source that is not chosen is grayed out.
+  ImGui::BeginDisabled(running);
+  if (ImGui::RadioButton("From PKG files  (the folder with the base game PKG and the 1.09 update PKG)", !g_gameMode)) g_gameMode = false;
+  ImGui::EndDisabled();
+  pathRow(nullptr, "##pkgs", g_pkgs, sizeof g_pkgs, 0, win, !running && !g_gameMode);
+  ImGui::BeginDisabled(running);
+  if (ImGui::RadioButton("From an extracted game  (the folder with eboot.bin, sce_module and sce_sys, update 1.09 merged)", g_gameMode)) g_gameMode = true;
+  ImGui::EndDisabled();
+  pathRow(nullptr, "##game", g_game, sizeof g_game, 2, win, !running && g_gameMode, true);
   pathRow("Output folder  (everything the phone needs goes into it)", "##out", g_out, sizeof g_out, 1, win, !running);
 
-  const bool ready = !running && trimmed(g_pkgs).size() > 0 && trimmed(g_out).size() > 0;
+  const bool ready = !running && trimmed(g_gameMode ? g_game : g_pkgs).size() > 0 && trimmed(g_out).size() > 0;
   ImGui::BeginDisabled(!ready);
   if (ImGui::Button("  Build  ")) {
-    std::string p = trimmed(g_pkgs), o = trimmed(g_out);
-    snprintf(g_pkgs, sizeof g_pkgs, "%s", p.c_str()); snprintf(g_out, sizeof g_out, "%s", o.c_str());
+    char* src = g_gameMode ? g_game : g_pkgs; size_t srcSize = g_gameMode ? sizeof g_game : sizeof g_pkgs;
+    std::string p = trimmed(src), o = trimmed(g_out);
+    snprintf(src, srcSize, "%s", p.c_str()); snprintf(g_out, sizeof g_out, "%s", o.c_str());
     startBuild();
   }
   ImGui::EndDisabled();
@@ -273,12 +298,14 @@ void frame(SDL_Window* win) {
   }
   if (finished && !failed && !result.empty()) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.56f, 0.75f, 0.50f, 1.f));
-    ImGui::TextWrapped("Done: copy the folder\n    %s\nto your phone and choose it as the game folder in the app (Menu > Game folder). The app imports the native CPU files in it by itself.", result.c_str());
+    if (g_builtGame) ImGui::TextWrapped("Done: copy the folder\n    %s\n(named \"aot\") next to eboot.bin in the game folder on your phone, or into the extracted game folder before you copy it to the phone. Then choose the game folder in the app (Menu > Game folder). The app imports the native CPU files by itself.", result.c_str());
+    else ImGui::TextWrapped("Done: copy the folder\n    %s\nto your phone and choose it as the game folder in the app (Menu > Game folder). The app imports the native CPU files in it by itself.", result.c_str());
     ImGui::PopStyleColor();
-    if (ImGui::Button("Open the folder")) { std::string url = std::string("file://") + (result.size() > 1 && result[1] == (char)58 ? "/" : "") + result; SDL_OpenURL(url.c_str()); }
+    if (ImGui::Button("Open the folder")) { std::string dir = g_builtGame ? result + (result.find('\\') != std::string::npos ? "\\aot" : "/aot") : result;
+      std::string url = std::string("file://") + (dir.size() > 1 && dir[1] == (char)58 ? "/" : "") + dir; SDL_OpenURL(url.c_str()); }
   } else if (finished && failed) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.46f, 0.36f, 1.f));
-    ImGui::TextWrapped("%s", cancelled ? "The build was cancelled. Nothing in your PKG folder was changed." : error.c_str());
+    ImGui::TextWrapped("%s", cancelled ? g_builtGame ? "The build was cancelled. Nothing in your game folder was changed." : "The build was cancelled. Nothing in your PKG folder was changed." : error.c_str());
     ImGui::PopStyleColor();
   }
 
@@ -302,6 +329,7 @@ int guiMain(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--gui-selftest") && i + 1 < argc) shot = argv[++i];
     else if (!strcmp(argv[i], "--pkgs-default") && i + 1 < argc) snprintf(g_pkgs, sizeof g_pkgs, "%s", argv[++i]);
+    else if (!strcmp(argv[i], "--game-default") && i + 1 < argc) { snprintf(g_game, sizeof g_game, "%s", argv[++i]); g_gameMode = true; }
     else if (!strcmp(argv[i], "--out-default") && i + 1 < argc) snprintf(g_out, sizeof g_out, "%s", argv[++i]);
     else if (!strcmp(argv[i], "--about")) g_aboutOpen = true;
     else if (!strcmp(argv[i], "--gui-autobuild")) autobuild = true;  // self-test: press Build, screenshot mid-build (<shot>.mid.bmp) and at the end
