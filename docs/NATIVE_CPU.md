@@ -39,7 +39,7 @@ The tool does everything in one go. You give it the folder with your game's PKG 
 
 ## Windows
 
-1. Download `bb-recomp-windows-x86_64.zip` (no release is published yet; until then build it from source, see the README) from the Releases page of
+1. Download `bb-recomp-windows-x86_64.zip` from the Releases page of
    [github.com/ducvd89/Bloodborne-android-rebuild-tool](https://github.com/ducvd89/Bloodborne-android-rebuild-tool) and unzip it anywhere.
 2. Double-click **`bb-recomp.exe`**. Windows may say the program is unknown (it is not signed with a paid certificate): click **More info**,
    then **Run anyway**.
@@ -98,7 +98,7 @@ yourself.
 
 ## On the phone
 
-You need the app **2.0.0 or newer** (coming soon).
+You need the app **2.0.0 Beta 1 or newer**.
 
 1. Copy the game folder (`CUSA03173`, with `aot` inside; copying the whole output folder works too) to the phone's storage or an SD card.
    A USB cable (file transfer mode), `adb push`, or a card reader all work. It is a big copy (the whole game).

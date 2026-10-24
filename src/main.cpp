@@ -250,6 +250,9 @@ int playerMain(int argc, char** argv);
 #include "gui.h"
 #endif
 int main(int argc, char** argv) {
+#ifdef BBR_TOOL_VERSION
+  if (argc == 2 && (!strcmp(argv[1], "--version") || !strcmp(argv[1], "-V"))) { printf("bb-recomp %s\n", BBR_TOOL_VERSION); return 0; }
+#endif
 #ifdef BB_RECOMP_GUI
   if (argc == 1 || (argc >= 2 && (!strcmp(argv[1], "--gui") || !strcmp(argv[1], "--gui-selftest") || !strcmp(argv[1], "--about")))) return guiMain(argc, argv);
 #endif

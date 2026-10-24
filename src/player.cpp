@@ -47,7 +47,7 @@
 #define BBR_HAVE_VARIANTS 1 // recompMain() knows --variants (variant catalogs, native hook sites)
 
 #ifndef BBR_TOOL_VERSION
-#define BBR_TOOL_VERSION "0.1.0"
+#define BBR_TOOL_VERSION "1.0.0"
 #endif
 
 int recompMain(int argc, char** argv);

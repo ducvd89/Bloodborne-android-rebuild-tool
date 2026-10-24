@@ -7,9 +7,10 @@ the game and its update, and **recompiles the game's x86-64 code ahead of time i
 code**, so the game runs as native code on the phone. The Android port needs it: since version 2.0.0 the app has
 no x86 emulator.
 
-> **Status: new.** Since app version 2.0.0 the Android port runs the game only as native code built by
+> **Status: version 1.0.0.** Since app version 2.0.0 Beta 1 the Android port runs the game only as native code built by
 > this tool (no emulator). Tested on an AYN Thor (Snapdragon 8 Gen 2): title, save load and gameplay.
-> The window, the command line and the Linux and Windows packages are done; the first release is coming.
+> The window, the command line and the Linux and Windows packages are released; the native code format
+> (ABI version 1) matches Bloodborne Android 2.0.0 Beta 1.
 
 ## Why you build it yourself
 
@@ -32,12 +33,12 @@ minutes (mostly copying files).
 | **Game files** | Your own Bloodborne **base game PKG** and the **1.09 update PKG** (fake PKGs, the same files the app's "Install from PKG" uses), together in one folder with nothing else in it. Tested with **CUSA03173**; other releases of 1.09 should work but are untested. |
 | **PC** | Windows 10 (1903+) / 11, 64-bit, or Linux with glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36, Arch or newer). A processor with AVX2 (Intel 2013+ or any AMD Ryzen). |
 | **Memory / disk** | 8 GB free RAM (16 GB+ is faster). Free disk space: about the size of the base game PKG plus 3 GB. |
-| **Phone** | The Bloodborne Android app **2.0.0 or newer** (coming soon; it needs this tool's output to run the game), and room for the game folder. |
+| **Phone** | The Bloodborne Android app **2.0.0 Beta 1 or newer** (it needs this tool's output to run the game), and room for the game folder. |
 
 ### Step 1: Get the tool
 
-Download it from the [Releases page](https://github.com/ducvd89/Bloodborne-android-rebuild-tool/releases)
-(**not published yet**: until the first release, build it from source, see [Building from source](#building-from-source)):
+Download it from the [latest release](https://github.com/ducvd89/Bloodborne-android-rebuild-tool/releases/latest)
+(or build it from source, see [Building from source](#building-from-source)):
 
 - **Windows:** `bb-recomp-windows-x86_64.zip`. Unzip it anywhere.
 - **Linux:** `Bloodborne-Android-Rebuild-Tool-x86_64.AppImage`. Make it executable
