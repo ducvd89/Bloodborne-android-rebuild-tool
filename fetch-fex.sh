@@ -45,3 +45,9 @@ fetch() {
 }
 for p in "${need[@]}"; do fetch "$p" & done
 wait
+# macOS (Apple Silicon): FEX's CMake accepts only Linux and Windows; macos/fex-macos.patch lets it configure on Darwin (the Linux headers and
+# system calls the front end names come from macos/compat, see CMakeLists.txt). Applied once, to the prepared copy only.
+if [[ $(uname -s) == Darwin && ! -f $dest/.bb-macos-patched ]]; then
+    patch -d "$dest" -p1 -s < "$root/macos/fex-macos.patch"
+    touch "$dest/.bb-macos-patched"
+fi

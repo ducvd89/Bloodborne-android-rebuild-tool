@@ -83,8 +83,8 @@ std::string selfPath() {
   char b[4096]; DWORD n = GetModuleFileNameA(nullptr, b, sizeof b);
   return std::string(b, n);
 #else
-  char b[4096]; ssize_t n = readlink("/proc/self/exe", b, sizeof b - 1);
-  return n > 0 ? std::string(b, (size_t)n) : d + "/bb-recomp";
+  const std::string p = bundleExePath();
+  return !p.empty() ? p : d + "/bb-recomp";
 #endif
 }
 

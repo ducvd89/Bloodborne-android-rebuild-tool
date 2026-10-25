@@ -50,8 +50,13 @@ static void usage() {
         "  --out <dir>          census output directory (default out/recomp)\n"
         "  --jobs <n>           worker threads (default: cores - 2, at most 22; fewer when the memory budget needs it)\n"
         "  --limit <n>, --every <n>   census (and compile) only the first n functions / every nth function\n"
+#ifdef __APPLE__
+        "  --base <hex>         host address of image vaddr 0 (default 0x3a7700000000 on macOS, which reserves everything below 0x7000000000:\n"
+        "                       no plain constant of the game falls in it, the library is the same as with 0x2b00000000)\n"
+#else
         "  --base <hex>         host address of image vaddr 0 (default 0x2b00000000: no plain constant of the game falls in it;\n"
         "                       a multiple of 4 GB below 0x8000000000, so that it also fits a 39-bit address space; others are tried when it cannot be mapped)\n"
+#endif
         "  --host <profile>     target features: armv8.2 | armv8.4 (default) | armv9\n"
         "  --no-multiblock      one basic block per unit (FEX default is multiblock; the game ships Multiblock=1)\n"
         "  --tso                lift with x86 TSO memory ordering (the game runs with it off)\n"

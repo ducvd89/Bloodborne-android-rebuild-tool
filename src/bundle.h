@@ -19,3 +19,6 @@ int bbrSystem(const std::string& bundleDir, const std::string& cmd);
 
 // The directory of this executable (".": unknown).
 std::string bundleExeDir();
+
+// The full path of this executable ("": unknown).
+std::string bundleExePath();
