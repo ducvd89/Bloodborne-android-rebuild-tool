@@ -154,6 +154,7 @@ void setConfig(const LiftOptions& o) {
     Config::Set(Config::CONFIG_HALFBARRIERTSOENABLED, "0");
     Config::Set(Config::CONFIG_X87REDUCEDPRECISION, "1");
     Config::Set(Config::CONFIG_DISABLETELEMETRY, "1");
+    Config::Set(Config::CONFIG_SMALLTSCSCALE, "0"); // TSCScale 0 on every host: the rdtsc IR must not depend on the counter of the build machine (bbr_rdtsc scales)
     Config::Set(Config::CONFIG_MAXINST, std::to_string(o.maxInst));
   });
 }
