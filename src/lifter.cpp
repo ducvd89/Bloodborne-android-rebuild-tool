@@ -273,7 +273,8 @@ jt::Ins jtInst(const X86Tables::DecodedInst& d) {
            starts("LODS") || starts("SCAS") || starts("CMPS") || is("LEAVE") || is("ENTER") || is("SAHF") || is("LAHF") || is("XLAT"))
     r.kind = (is("MOVSXD") || starts("MOVSX") || is("MOVSS") || is("MOVSD") || is("MOVSLDUP") || is("MOVSHDUP")) ? jt::K::Other : jt::K::Clobber;
   r.flagSafe = is("MOV") || is("LEA") || is("MOVZX") || is("MOVSXD") || starts("MOVSX") || is("PUSH") || is("POP") || is("NOP") || starts("PREFETCH") ||
-               is("CDQE") || is("CDQ") || is("CQO") || is("CBW") || is("CWDE") || is("CWD");
+               is("CDQE") || is("CDQ") || is("CQO") || is("CBW") || is("CWDE") || is("CWD") ||
+               starts("VMOV") || starts("MOVAP") || starts("MOVUP") || starts("MOVDQ") || is("MOVSS"); // vector moves: the scheduler puts them between cmp and ja (`cmp r15d, 5 ; vmovss xmm1, [..] ; ja`)
   if (r.kind == jt::K::Clobber) {
     // The registers the instruction writes, so that a table base held in another register survives it: `cltq` between the base lea and the
     // jump does not touch r11 (the unresolved switch of CSChrThread's +0x210eb7c). Anything not listed clobbers everything.

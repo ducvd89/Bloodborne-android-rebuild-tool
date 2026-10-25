@@ -161,7 +161,7 @@ links it into the `.so` (with libm as `DT_NEEDED`, `--helpers-dir` to use other 
 - `fde_scan.cpp`: `.eh_frame_hdr` table of every module -> 162,959 + 2,814 functions (the eboot list is identical to `ehscan.py`);
   `addNonFdeEntries`: module starts and PLT stubs. `elf_image.cpp`: the ELF loader and the boot-linked image loader.
 - `jumptable.cpp`: recognises `cmp/ja; lea; movsxd; add; jmp` (and variants) in the decoded instructions of a unit and reads the
-  rel32 table. The lifter adds the case targets (and in-function branches the decoder would not follow, > 4 pages ahead) as block
+  rel32 table (to the bound, or without one to the first entry that is no code address, the start of another table of the function (the next `lea` target) or the end of the function). The lifter adds the case targets (and in-function branches the decoder would not follow, > 4 pages ahead) as block
   entries and decodes again until nothing new appears; the lowering turns the `jmp` into an LLVM `switch`.
 - `discover.cpp`: code without an FDE (relocation pointers, `lea`, branch targets outside every function), to a fixpoint.
   `eh_frame.cpp`: landing pads from the LSDAs, setjmp call targets from the boot file's imports.

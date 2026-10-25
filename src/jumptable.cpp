@@ -168,8 +168,17 @@ std::vector<Jump> analyze(const std::vector<Ins>& ins, const Env& env) {
     std::vector<uint64_t> t;
     uint32_t read = 0;
     // The table ends at the bound or at the first entry that is no code address of this function (the bound may be
-    // too large: `and idx, 31` for a table of 13 entries; the next object in .text follows the table).
+    // too large: `and idx, 31` for a table of 13 entries; the next object in .text follows the table), and at the
+    // start of another table of the function (the next `lea base, [rip+T]` target above this one: a scan without a
+    // bound would read the next table as more entries, against the wrong base) or at the end of the function.
+    uint64_t stop = env.hi;
+    for (const Ins& l : ins)
+      if (l.kind == K::Lea && l.src.k == Op::Mem && l.src.rip && l.src.base < 0 && l.dst.k == Op::Reg) {
+        const uint64_t a = l.pc + l.size + l.src.imm;
+        if (a > j.table && a < stop) stop = a;
+      }
     for (uint32_t e = 0; e < want; ++e) {
+      if (j.table + 4ull * e + 4 > stop) break;
       int32_t v;
       if (!env.readS32(j.table + 4ull * e, v)) break;
       const uint64_t target = baseVal + (int64_t)v;
