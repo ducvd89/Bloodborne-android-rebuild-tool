@@ -9,6 +9,15 @@
 Shared design for the LLVM lowering (the tool: src/) and the runtime backend (cpu/guest_cpu_aot.cpp).
 See STATIC_RECOMPILE_PLAN.md for the plan.
 
+## Version history
+
+`bbr_abi_version` (u32 in the `.so`, `abi_version` in libbbaot.json; `kBbrAbiVersion` in src/version.h) is what the runtime compares: a library with another number is refused and the app asks for a rebuild.
+
+- **1** (tool 1.0.0, 1.1.0): the layout this document describes.
+- **2** (tool 1.2.0): the same layout and the same runtime interface as 1. The number was raised only to make every library built by tool 1.1.0 or older count as
+  stale: those were compiled before the jump-table scan, granular-probe and rdtsc fixes (a game trap such as `guest trap (0x800d0b, 0x287188a)` came from them) and
+  must be rebuilt. The runtime side must check `== 2` (app 2.1.0 Beta and newer); a library of ABI 2 does not run on an app that wants 1, and the other way round.
+
 ## Units
 
 - **One unit per FEX IR multiblock.** That is one FDE function (the *entry unit*), plus extra units for code the entry unit does
@@ -26,9 +35,9 @@ See STATIC_RECOMPILE_PLAN.md for the plan.
 - **Unit table.** The `.so` exports `bbr_units[]`, a sorted array of `{ uint64_t vaddr; void (*fn)(GuestState*); }`
   with one entry per unit: every FDE start of every module, every gap unit and every secondary entry. It also exports
   `bbr_unit_count`, `bbr_image_hash` (FNV-1a 64 of the image the `.so` was built from: the flat boot image, or the ELF file for a
-  plain `--elf` build), `bbr_abi_version` (1) and the writable `bbr_image_base`. The unit functions themselves have hidden
+  plain `--elf` build), `bbr_abi_version` (2, see "Version history" below) and the writable `bbr_image_base`. The unit functions themselves have hidden
   visibility: the table is the only way in.
-- **Per-unit tables** (additive, ABI version still 1; indexed like `bbr_units[]`): `bbr_unit_end[i]` (u64: the vaddr just past the
+- **Per-unit tables** (additive, no ABI bump; indexed like `bbr_units[]`): `bbr_unit_end[i]` (u64: the vaddr just past the
   last decoded byte of unit i; the unit's code lies in `[vaddr, end)`, with holes where other units' code or table data sit),
   `bbr_unit_extra[i]` (u8: 1 = not the start of a function: case body, landing pad, setjmp return site, jump target into the middle
   of a function; it belongs to the function of the nearest preceding unit with 0 and is entered by jumps), `bbr_unit_hash[i]`
@@ -50,7 +59,7 @@ See STATIC_RECOMPILE_PLAN.md for the plan.
   can be entered from outside its own unit (a tail jump into the middle of a function, a case body reached from a gap unit), is a
   unit entry: the tool finds them by lifting every unit and collecting its direct branch/call targets that lie outside its own range
   (432 in the game, mostly in a handful of large functions), lifts them as units (`bbr_unit_extra` = 1) and repeats to a fixpoint.
-- **Function table** (additive, ABI version still 1). `bbr_funcs[]`, `bbr_func_count`: `{ uint32_t start, end, first_unit, unit_count; }`
+- **Function table** (additive, ABI version unchanged since 1). `bbr_funcs[]`, `bbr_func_count`: `{ uint32_t start, end, first_unit, unit_count; }`
   per FDE function in address order, where `first_unit .. first_unit+unit_count` is the run of `bbr_units[]` entries that lie in
   `[start, end)` (entry unit first). A dispatcher that has to resume in the middle of a function (below) finds the function by
   binary search and tries those units. `bbr_abi_flags` (u64): bit 0 = the units have resume entries.
@@ -90,7 +99,7 @@ See STATIC_RECOMPILE_PLAN.md for the plan.
   CPU. Cost (measured on a 20,000-function sample at -O1, then the whole game): see the plan, "Resume entries". It is **off by
   default**; `bbr_abi_flags` bit 0 tells the runtime whether the `.so` has it.
 
-## Variants: precompiled patched code (additive, ABI version still 1; `bbr_abi_flags` bit 2)
+## Variants: precompiled patched code (additive, no ABI bump; `bbr_abi_flags` bit 2)
 
 The runtime patches the game's code at start-up (patch parts, the port's own hooks) and while the game runs (BBSC's toggled patches). Patches whose bytes are known
 at build time are described to `bb-recomp` in a **variant catalog** (`variants/*.txt`, docs/RECOMP_HOOKS.md: a list of *groups*, each a set of writes `vaddr + bytes`

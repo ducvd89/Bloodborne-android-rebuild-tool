@@ -68,7 +68,7 @@ relocated as an image address, a spin-wait load must be volatile) and `tests/run
 units or granular entries; `--extra-entries`, `--check-entries`, `--dump-units`, `--units-only`; about 2 s, no code generated).
 
 Sanitizers: `cmake ... -DBB_RECOMP_SANITIZE=address,undefined` builds the tool and the test tools with ASan and UBSan (FEXCore itself uncovered). Under ASan the default image base 0x200000000 and the tests'
-low fixed addresses lie in ASan's shadow gap: use `--base 200000000000` (bb-recomp), `--high-addresses` (bb-recomp-difftest) and `ASAN_OPTIONS=detect_leaks=0:protect_shadow_gap=0`.
+low fixed addresses lie in ASan's shadow gap: use `--base 200000000000` (bb-recomp; it is a different base from the default and gives the same library only for bases that relocate the same constants, see docs/NATIVE_CPU.md, "The lift base"), `--high-addresses` (bb-recomp-difftest) and `ASAN_OPTIONS=detect_leaks=0:protect_shadow_gap=0`.
 
 ### Gaps: granular entries, the misses log, `--extra-entries` (phase 6: native only, no FEX fallback)
 
@@ -102,7 +102,7 @@ carries the import names and relocations, which discovery needs. `--elf` then on
 `--boot` (plain `eboot.elf`) there are no relocations and no setjmp detection. The module names come from `link.json` next to the
 boot file. Steps before lifting (each prints a line): the non-FDE entries (module starts, PLT stubs), discovery
 (`--no-discovery`), landing pads and setjmp sites (`--no-secondary`). Switch tables are resolved unless `--no-switch-tables`.
-`--no-dirty-check` drops the per-unit `bbr_dirty[]` test (default on, +8.5 % `.text`). `--target x86_64 --so` links a PC runtime library with clang+lld. `--resume-entries` adds the resume switch to every unit (docs/RECOMP_ABI.md). `bbr_image_hash` is the FNV-1a of the flat image.
+`--game-dir <game folder>` replaces `--elf` and `--prx-dir` (it reads `eboot.bin` and `sce_module/*.prx` for their program headers; the module names default to libc.prx, libSceFios2.prx without `link.json`) and, with `--so`, writes `libbbaot.json`; with `--progress`, `--resume` and `--clean-work` it is the phone build (docs/NATIVE_CPU.md, "The phone build"). The lift base (`--base`) defaults to `0x2b00000000`, valid on 39-bit address spaces. `--no-dirty-check` drops the per-unit `bbr_dirty[]` test (default on, +8.5 % `.text`). `--target x86_64 --so` links a PC runtime library with clang+lld. `--resume-entries` adds the resume switch to every unit (docs/RECOMP_ABI.md). `bbr_image_hash` is the FNV-1a of the flat image.
 
 Compile resources: `--plan-only` prints the plan; the shard and worker counts follow the available RAM (`--mem-fraction`, default
 0.6; `BBR_FAKE_MEM_GB=12` pretends a smaller PC). `BBR_DEBUG_JUMPS=1` prints the instructions before every indirect jump.

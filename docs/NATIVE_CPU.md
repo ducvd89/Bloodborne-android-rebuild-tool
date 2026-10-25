@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Native CPU (recompiled game code)
 
-This is a guide for players. It explains what the native CPU is, how to build it on your own PC, and how to get it onto your phone.
+This is a guide for players (the last sections are for the app's developers). It explains what the native CPU is, how to build it on the phone or on your own PC, and how to get it onto your phone.
 
 ## What it is
 
@@ -9,12 +9,25 @@ Bloodborne is a PS4 game, so its code is written for an Intel-type (x86-64) proc
 the app translated the game's code **while you play** (with the FEX emulator), which cost CPU time and battery and caused small stutters
 the first time the game ran a piece of code.
 
-The **native CPU** does that translation **once, before you play**, on your PC. The result is a file, `libbbaot.so`, which holds the whole
+The **native CPU** does that translation **once, before you play**. The result is a file, `libbbaot.so`, which holds the whole
 game's code already translated to ARM. Since app version 2.0.0 the game runs **only** from that file: there is no
-emulator in the app any more, so the game does not start without it (the app explains how to get it).
+emulator in the app any more, so the game does not start without it (the app explains how to get it). You can make the file in two ways:
+**on the phone**, inside the app (since app 2.1.0 Beta; no PC needed), or **on a PC** with this tool.
+
+**Versions.** Tool 1.2.0 writes native code with **ABI version 2**. It needs the app **2.1.0 Beta or newer**, and app 2.1.0 needs a library of ABI 2: a
+library built by tool 1.1.0 or older (ABI 1) is refused, and the app asks for a rebuild. That is intended: those libraries were built before
+fixes in the jump table scan, the granular entries and `rdtsc`, and a game that stopped with `guest trap (0x800d0b, 0x287188a)` was hitting them.
 
 It is **new**: it has been tested on the AYN Thor (Snapdragon 8 Gen 2). If the game stops or misbehaves, please send a bug report
 (Menu > Report a problem).
+
+## Two ways to build it
+
+- **On the phone, in the app** (app 2.1.0 Beta or newer): menu > Native CPU > **Build on this phone**. The app runs the same compiler as this tool on the
+  game image it already has. No PC, no copying. It takes about **6 minutes** on a Snapdragon 8 Gen 2 with the charger connected (the phone gets hot), needs
+  about **4 GB of free RAM** and **1 GB of free storage** while it works, and writes the same `libbbaot.so` and `libbbaot.json` a PC would (byte for byte
+  the same library for the same game and tool version). See "The phone build" at the end for what the app runs.
+- **On a PC** with this tool (below), then copy the `aot` folder to the phone.
 
 ## Why you build it yourself
 
@@ -48,7 +61,7 @@ made earlier. It skips the PKG check and the unpacking, so it takes a few minute
 - **Disk space**: about 3 GB, plus for A the size of the game unpacked (about the size of the base game PKG). The tool tells you before it
   starts if there is not enough.
 - **Time**: for A, unpacking the game depends on your disk (an SSD takes minutes, a slow hard disk much longer); building the native code takes
-  about 2 minutes on a 12-core PC and longer on a laptop with 4 cores.
+  about 2.5 minutes on a 24-thread PC and longer on a laptop with 4 cores.
 
 ## Windows
 
@@ -126,7 +139,7 @@ yourself.
 
 ## On the phone
 
-You need the app **2.0.0 Beta 1 or newer**.
+You need the app **2.1.0 Beta or newer** (ABI 2; an app 2.0.0 Beta 1 needs a library built by tool 1.1.0).
 
 1. Copy to the phone's storage or an SD card (a USB cable in file transfer mode, `adb push`, or a card reader all work):
    - **A:** the game folder (`CUSA03173`, with `aot` inside; copying the whole output folder works too). It is a big copy (the whole game).
@@ -148,7 +161,9 @@ You can also import the two files by hand: Menu > Native CPU (recompiled) > **Im
 ## When to build it again
 
 - When the app tells you the library uses another **ABI version**. A new app release can change how the game and the library talk to
-  each other: download the tool of the same release and build again.
+  each other: build again with the tool release the app names (app 2.1.0 Beta: tool 1.2.0, ABI 2), or let the app build it on the phone.
+- **When a new tool version fixes something that was wrong in the code it wrote.** 1.2.0 is such a version: a library built by 1.1.0 or older can stop the
+  game with `guest trap (0x800d0b, 0x287188a)`; the ABI number was raised so that the app asks for the rebuild.
 - When the game's files change (a different game release or update). The menu says **not for this game**.
 
 You do not need to build it again for a new version of the app that has the same ABI version, or for a new phone (copy the same game
@@ -185,6 +200,14 @@ game.
 **"this game is not supported. Found CUSAxxxxx version 01.0x ..."** - the folder does not hold the 1.09 game. The message says what is
 missing (the update, or an `eboot.bin` that is not the 1.09 one).
 
+**The game stops with "guest trap (0x800d0b, 0x287188a)"** - the library was built by tool 1.1.0 or older. Build it again with tool 1.2.0 (or let the app 2.1.0 Beta
+build it on the phone).
+
+**"cannot map the image at the lift base ..." (the tool, or the app's build on the phone)** - the tool maps the game's image at a fixed address while it
+analyses it (default `0x2b00000000`, a place that also exists on phones whose kernel has a 39-bit address space) and found it taken. It then tries two
+other places by itself; if all fail the message says so. Close other programs and start again; with the command line `--base <hex>` (a multiple of 4 GB
+below `0x8000000000`) picks another place. The result does not depend on the place.
+
 **It stops with "out of memory", or the PC freezes** - close other programs, or run it from the command line with fewer workers and less
 memory: `--jobs 4 --mem-fraction 0.4`. It is slower but needs less memory.
 
@@ -205,11 +228,89 @@ library does not cover a place the game jumped to. Copy `aot-misses.log` to the 
 
 **The game hangs or crashes** - send a report (Menu > Report a problem); it includes the logs that show where it stopped.
 
+## The phone build (for the app's developers)
+
+Bloodborne Android 2.1.0 Beta ships the tool's command line build as `libbbrecomp.so` and runs it to make `libbbaot.so` on the phone. `arm64/package-android.sh`
+makes the files (`out/android/`: the binary, `bundle/`, `variants/`, `licenses/`, `VERSION`, `README-ANDROID.md`, and the tarball
+`bb-recomp-android-aarch64.tar.xz`). The binary is a static AArch64 executable (glibc, LLVM 23.1.3 with only the AArch64 back end, LLD in the process, 58 MB stripped); it needs no
+NDK, no clang, no Python, no `eboot.elf`, no `link.json` and no `.prx` folder. Same sources as the PC tool: the library it writes is byte-identical to the PC's for the same
+game, tool version and `--shards` (checked: x86-64 build, the AArch64 build under qemu, and the AYN Thor).
+
+### Command line
+
+Paths absolute, without spaces or quotes. The working directory does not matter.
+
+```
+libbbrecomp.so --boot <data>/boot-linked.bin --game-dir <game folder> \
+    --bundle-dir <bundle dir> --variants <variants dir> \
+    --so <work>/libbbaot.so --stats <work>/compile.txt \
+    --jobs <n> --shards 64 -O1 --no-nice --progress --resume --clean-work
+```
+
+| Input | |
+|---|---|
+| `--boot` | the game image the app builds (`bbport/data/boot-linked.bin`, BBPROBE5, what `bb-prepare` writes). The image hash in the library is taken from it |
+| `--game-dir` | a game folder. Read: `eboot.bin`, `sce_module/libc.prx`, `sce_module/libSceFios2.prx` (the ELF program headers, for the place of each module's `.eh_frame_hdr`; the files are SELF files and are read as they are; module order is that of the boot image: libc, then libSceFios2) and `sce_sys/param.sfo` (TITLE_ID, APP_VER, TITLE, CONTENT_ID for the json). Nothing else, nothing is changed. A folder with just these four files works. The game check (1.09, unpatched eboot) is the app's: the tool trusts the boot image |
+| `--bundle-dir`, `--variants` | `out/android/bundle` and `out/android/variants`, copied out of the APK to files |
+| `--so` | the folder of this path is the work folder (must exist, about 1 GB free while it works, 130 MB at the end) |
+| `--jobs <n>` | worker threads. Memory is about 0.5 GB + 0.8 GB per job (Thor: `--jobs 4` peak 3.8 GB, 5 min 55 s with the charger connected). With `--shards 64` fixed the result does not depend on `--jobs` or on the available memory; without `--shards` the tool changes the shard count to fit the memory and the bytes of the library change with it |
+| `--no-nice` | the tool otherwise lowers its own priority to 19 |
+
+Outputs (in the work folder): `libbbaot.so`; `libbbaot.json` (written by the tool after it has read the `.so` back and checked the ABI version, the image hash against the boot image and the unit table; the
+json is the format of player mode: `format` 1, `kind`, `game_id`, `game_version`, `content_id`, `game_title`, `image_hash`, `image_size`, `abi_version` 2, `abi_flags`, `unit_count`, `function_count`, `tool`, `llvm`, `created`,
+`so_size`, `so_sha256`); the `--stats` file (the summary). Its name is the name of the `.so` with `.json`; `--json <file>` names another. `--clean-work` deletes the objects (`libbbaot.so.o.NNN.o`,
+their `.stat` files, `libbbaot.table.o`, `libbbaot.helpers.o`, `libbbaot.var*.o`, `libbbaot.so.libbbcpu-stub.so`) after the success. The app verifies the `.so` against the json (`so_size`, `so_sha256`) as it does for a PC build.
+
+### Progress, exit status, stop and resume
+
+With `--progress` every run ends with `BBR-DONE <exit status>` and, on a failure, `BBR-ERROR <message>` (one line) just before it. The machine lines are flushed and appear between the human lines of stdout:
+
+```
+BBR-PROGRESS <stage> <done> <total>
+```
+
+| Stage | `done` / `total` | Share of the time |
+|---|---|---|
+| `scan` | 0/1 when it starts, 1/1 when the image, the function list and the landing pads are known | 1 % |
+| `discover` | functions examined of all (the search for code without an FDE; it has later rounds that report nothing) | 2 % |
+| `lift` | code bytes lifted of the code to compile (the pass that learns the unit set) | 2 % |
+| `compile` | work done of the whole compile, in code bytes x 100 (about 3 % of a shard's work is lifting, the rest optimiser and code generator; a finished shard counts all of it, a reused one too) | 93 % |
+| `variants` | functions with variants done of all | 1 % |
+| `link` | 0/3 the unit table, 1/3 the x87 helpers, 2/3 the link, 3/3 done (lines of a stage that come within a quarter of a second of the last are left out, the first and the last of every stage always appear) | 1 % |
+| `json` | 0/1, 1/1 | - |
+| `done` | 1/1, printed just before `BBR-DONE 0` | - |
+
+`done` only grows within a stage. A stage can be absent (no `variants` without a catalog). The shares are from the CPU time of a PC build (7 s of analysis, 1638 s of compile, a few serial seconds for variants and link); they hold on the phone too, so one
+bar can use these weights and take the ETA from the finished fraction over time (the `compile` lines come about every 250 ms on a PC, about 140 in a whole build).
+
+| Exit status | |
+|---|---|
+| 0 | done: `libbbaot.so` and `libbbaot.json` are complete and checked |
+| 1 | failed; the message is in `BBR-ERROR` and on stderr (for example `cannot map the image ...`, a read error, link failure) |
+| 2 | bad command line |
+| 143 / 130 | stopped by SIGTERM / SIGINT |
+| 137, other 128+n | killed from outside (for example by the low memory killer): no `BBR-DONE` line |
+
+**Stop.** SIGTERM (or SIGINT) stops the analysis and the compile at the next function; a shard that is in the optimiser or the code generator is finished first (about a second, never more than a few); after 8 seconds the
+tool ends itself anyway. Finished shards stay in the work folder; nothing half written is left that a restart would trust (objects are written under a temporary name and renamed, the `.stat` file comes last).
+
+**Resume.** With `--resume` every finished shard leaves `libbbaot.so.o.NNN.o` and `libbbaot.so.o.NNN.o.stat` in the work folder. Run the same command again in the same folder (after a stop, a kill, a reboot) and the tool reuses every shard whose `.stat`
+key still matches (a hash over the tool version, the lift base, the image, every option that changes the code, the unit set, the function list, the hook declarations and the shard's functions) and whose object has the recorded size. The scan, discovery and unit-set passes, the
+variants, the table, the link and the json run again (seconds on a PC, well under a minute on a phone). The library is byte-identical to an uninterrupted build (checked: an interrupted and resumed build equals a fresh one). Start another game version, another tool version or other
+options in an empty work folder, or delete the old one. A `libbbaot.so` that exists after a kill may be half linked: only `BBR-DONE 0` makes it a result.
+
+### The lift base
+
+The tool maps the game image at a fixed host address while it analyses it (the "lift base"; `--base <hex>` changes it). The default is now `0x2b00000000` for every host (it was `0x3a7700000000`, which does not exist on kernels with a 39-bit address space, such as the Thor's:
+`CONFIG_ARM64_VA_BITS=39`, user space ends at `0x8000000000`). The base must be chosen so that no plain constant of the game lands in `[base, base + image size)`: the lowering relocates every 64-bit constant in that window as an image address. For Bloodborne 1.09 the check is the number of constants the lowering relocates:
+1,866,280 with the old base and with `0x2b00000000` (also `0x3d00000000`, `0x4700000000`, `0x4a00000000`, `0x5100000000`), but 1,866,287 with `0x2000000000`, 1,866,283 with `0x2300000000`, 1,866,282 with `0x2600000000` (plain constants of the game inside the window): those bases would change the code. With the default, the old base and the fallbacks the code is byte-identical: the -O0 objects for all of the bases above that have the same count, and the -O1 libraries of the old base, the new default, the phone-style command line and the two fallbacks (same sha256). The base is `hi << 32` (the low word of an entry-point offset is the vaddr) with `hi < 0x80`.
+When the address range cannot be mapped the tool tries `0x3d00000000` and `0x4700000000` (checked the same way) and then stops with `cannot map the image (N MB) at the lift base 0x...: <reason> ...` (`BBR-ERROR` too); `--base` given on the command line is never replaced.
+
 ## For developers
 
 - Tool sources, build and package scripts: the root of the tool's repository (see its `README.md`). `package.sh` builds the
   AppImage, `package-windows.sh` the Windows zip (cross-compiled with llvm-mingw).
 - How the translated code runs and what the library contains: `docs/RECOMP_ABI.md`, `docs/STATIC_RECOMPILE_PLAN.md`.
-- The `.json` is written by `src/player.cpp`; the app reads it in `NativeCpu.java` (checks) and `NativeCpuDialog.java` (menu).
+- The `.json` is written by `src/aot_json.cpp` (player mode and `--game-dir`); the app reads it in `NativeCpu.java` (checks) and `NativeCpuDialog.java` (menu).
   Since app 2.0.0 the native code is required: the app has no switch for it and no x86 emulator to fall back to.
 - The tool is free software (GPL-3.0-or-later). If you paid for it, you were scammed.
