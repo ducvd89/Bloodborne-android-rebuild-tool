@@ -39,6 +39,8 @@ set(BB_MINGW_ROOT "" CACHE PATH "llvm-mingw directory (cross build for Windows)"
 # Linux release build (AppImage): linux-jammy-toolchain.cmake with an Ubuntu 22.04 sysroot and the LLVM tarball (fetch-deps.sh)
 set(BB_SYSROOT "" CACHE PATH "sysroot for linux-jammy-toolchain.cmake")
 set(BB_LLVM_ROOT "" CACHE PATH "LLVM release tarball directory for linux-jammy-toolchain.cmake")
+# AArch64 static glibc (arm64/build.sh): directory with libc-early.a and libm-early.a, linked whole before everything else (see bbrecomp.cmake)
+set(BB_RECOMP_EARLY_LIBS_DIR "" CACHE PATH "directory with libc-early.a and libm-early.a (static AArch64 glibc build)")
 set(BB_RECOMP_LLD_INCLUDE "" CACHE PATH "include directory of LLD's headers when LLVM is a build tree (Windows build)")
 # The window (Dear ImGui + SDL3, src/gui.cpp): BB_RECOMP_SDL_PREFIX holds a static SDL3 (lib/cmake/SDL3), BB_RECOMP_IMGUI_DIR the ImGui sources
 # (fetch-deps.sh fetches both). Without them bb-recomp is the command line tool only.
@@ -103,7 +105,7 @@ ExternalProject_Add(fex
     -DCMAKE_PROJECT_FEX_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/fex_project.cmake
     -DBB_RECOMP_DIR=${CMAKE_CURRENT_LIST_DIR}
     -DBB_RECOMP_PLAYER=${BB_RECOMP_PLAYER} -DBB_RECOMP_BUNDLED=${BB_RECOMP_BUNDLED} -DBB_RECOMP_VERSION=${BB_RECOMP_VERSION}
-    "-DBB_RECOMP_LLVM_DIR=${BB_RECOMP_LLVM_DIR}" "-DBB_RECOMP_DEPS_PREFIX=${BB_RECOMP_DEPS_PREFIX}" "-DBB_RECOMP_LLD_INCLUDE=${BB_RECOMP_LLD_INCLUDE}" "-DBB_RECOMP_SDL_PREFIX=${BB_RECOMP_SDL_PREFIX}" "-DBB_RECOMP_IMGUI_DIR=${BB_RECOMP_IMGUI_DIR}" "-DBB_RECOMP_MIMALLOC_DIR=${BB_RECOMP_MIMALLOC_DIR}"
+    "-DBB_RECOMP_LLVM_DIR=${BB_RECOMP_LLVM_DIR}" "-DBB_RECOMP_DEPS_PREFIX=${BB_RECOMP_DEPS_PREFIX}" "-DBB_RECOMP_LLD_INCLUDE=${BB_RECOMP_LLD_INCLUDE}" "-DBB_RECOMP_EARLY_LIBS_DIR=${BB_RECOMP_EARLY_LIBS_DIR}" "-DBB_RECOMP_SDL_PREFIX=${BB_RECOMP_SDL_PREFIX}" "-DBB_RECOMP_IMGUI_DIR=${BB_RECOMP_IMGUI_DIR}" "-DBB_RECOMP_MIMALLOC_DIR=${BB_RECOMP_MIMALLOC_DIR}"
     -DBB_RECOMP_SANITIZE=${BB_RECOMP_SANITIZE} -DBB_RECOMP_LLVM=${BB_RECOMP_LLVM} -DBB_RECOMP_MARCH=${BB_RECOMP_MARCH} -DBB_RECOMP_NASM=${BB_RECOMP_NASM}
   BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target ${BB_TARGETS} --parallel ${BB_RECOMP_JOBS}
   INSTALL_COMMAND ${CMAKE_COMMAND} -E copy_if_different ${BB_BUILT_FILES} ${CMAKE_BINARY_DIR}

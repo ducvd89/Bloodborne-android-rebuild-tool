@@ -19,6 +19,7 @@ struct CompileOptions {
   bool planOnly = false;         // print the memory plan and stop
   double memFraction = 0.6;      // peak memory target: this fraction of the available RAM
   uint64_t limit = 0;            // only the first N functions
+  uint64_t every = 1;            // only every Nth function (--every: a uniform sample, e.g. for compile time measurements)
   int64_t onlyVaddr = -1;        // only the function containing this vaddr
   std::string objPath;           // --obj: object files (<base>.NNN.o per shard, <base>.table.o)
   std::string llPath;            // --emit-ll: textual IR (<base>.NNN.ll per shard when shards > 1)

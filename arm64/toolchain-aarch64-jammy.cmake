@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Cross build of bb-recomp for AArch64 Linux, fully static (glibc, libstdc++ and libgcc linked in): runs under `adb shell` on an Android phone
+# without a dynamic loader. clang and lld of the x86-64 LLVM tarball cross compile against an Ubuntu 22.04 arm64 sysroot (glibc 2.35, libstdc++ 12).
+# A measurement build (compile time of the game on the phone), not a release. See arm64/build.sh.
+#   cmake -DCMAKE_TOOLCHAIN_FILE=arm64/toolchain-aarch64-jammy.cmake -DBB_SYSROOT=<arm64 sysroot> -DBB_LLVM_ROOT=<x86-64 LLVM tarball dir> ...
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR aarch64)
+foreach(v BB_SYSROOT BB_LLVM_ROOT)
+  if(NOT ${v})
+    set(${v} "$ENV{${v}}")
+  endif()
+endforeach()
+set(CMAKE_SYSROOT "${BB_SYSROOT}")
+set(CMAKE_C_COMPILER "${BB_LLVM_ROOT}/bin/clang")
+set(CMAKE_CXX_COMPILER "${BB_LLVM_ROOT}/bin/clang++")
+set(CMAKE_C_COMPILER_TARGET aarch64-linux-gnu)
+set(CMAKE_CXX_COMPILER_TARGET aarch64-linux-gnu)
+set(_gcc "${BB_SYSROOT}/usr/lib/gcc/aarch64-linux-gnu/12")
+set(_common "--target=aarch64-linux-gnu --sysroot=${BB_SYSROOT} --gcc-install-dir=${_gcc} -fuse-ld=lld")
+set(CMAKE_C_FLAGS_INIT "${_common}")
+set(CMAKE_CXX_FLAGS_INIT "${_common} -stdlib=libstdc++")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
+set(CMAKE_FIND_ROOT_PATH "${BB_SYSROOT}")
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+if(BB_RECOMP_DEPS_PREFIX)
+  list(APPEND CMAKE_FIND_ROOT_PATH "${BB_RECOMP_DEPS_PREFIX}")
+endif()

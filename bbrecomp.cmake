@@ -9,6 +9,17 @@ if(TARGET JemallocDummy)
 elseif(TARGET JemallocLibs)
   set(BBR_JEMALLOC_DUMMY JemallocLibs)
 endif()
+# FEXCore's defines for the host it is built for (FEXCore/Source/CMakeLists.txt): the x86-64 host is FEX's debug configuration (ENABLE_X86_HOST_DEBUG),
+# an AArch64 host (the static aarch64 measurement build, arm64/build.sh) is FEX's native one, with clang's preserve_all when FEX found it.
+if(ARCHITECTURE_arm64)
+  if(HAS_CLANG_PRESERVE_ALL)
+    set(BBR_FEX_DEFS JIT_ARM64 ARCHITECTURE_arm64=1 "FEXCORE_PRESERVE_ALL_ATTR=__attribute__((preserve_all))" FEXCORE_HAS_PRESERVE_ALL_ATTR=1)
+  else()
+    set(BBR_FEX_DEFS JIT_ARM64 ARCHITECTURE_arm64=1 FEXCORE_PRESERVE_ALL_ATTR= FEXCORE_HAS_PRESERVE_ALL_ATTR=0)
+  endif()
+else()
+  set(BBR_FEX_DEFS JIT_ARM64 ARCHITECTURE_x86_64=1 FEXCORE_PRESERVE_ALL_ATTR= FEXCORE_HAS_PRESERVE_ALL_ATTR=0)
+endif()
 set(BBR_COMMON "${BBR}/elf_image.cpp" "${BBR}/fde_scan.cpp" "${BBR}/lifter.cpp" "${BBR}/jumptable.cpp" "${BBR}/eh_frame.cpp" "${BBR}/discover.cpp" "${BBR}/variants.cpp")
 set(BBR_JIT "${BBR}/jit_host.cpp")
 set(BBR_HELPERS "${BB_RECOMP_DIR}/helpers")
@@ -19,8 +30,7 @@ set(BBR_LLVM_SRCS "${BBR}/lower_llvm.cpp" "${BBR}/lower_ops.cpp" "${BBR}/lower_v
 add_executable(bb-recomp "${BBR}/main.cpp" ${BBR_COMMON} "${BBR}/census.cpp")
 target_include_directories(bb-recomp PRIVATE
   "${CMAKE_SOURCE_DIR}/FEXCore/Source" "${CMAKE_SOURCE_DIR}/FEXCore/include" "${CMAKE_BINARY_DIR}/include" "${BBR}" "${BBR_HELPERS}")
-target_compile_definitions(bb-recomp PRIVATE
-  JIT_ARM64 ARCHITECTURE_x86_64=1 FEXCORE_PRESERVE_ALL_ATTR= FEXCORE_HAS_PRESERVE_ALL_ATTR=0)
+target_compile_definitions(bb-recomp PRIVATE ${BBR_FEX_DEFS})
 target_compile_options(bb-recomp PRIVATE -Wall -Wno-trigraphs -fwrapv -march=${BB_RECOMP_MARCH})
 target_link_libraries(bb-recomp PRIVATE FEXCore FEXCore_Base CodeEmitter FEXHeaderUtils ${BBR_JEMALLOC_DUMMY} fmt::fmt pthread)
 add_dependencies(bb-recomp IR_INC CONFIG_INC)
@@ -52,8 +62,7 @@ if(BB_RECOMP_LLVM)
       endif()
       target_include_directories(${t} PRIVATE
         "${CMAKE_SOURCE_DIR}/FEXCore/Source" "${CMAKE_SOURCE_DIR}/FEXCore/include" "${CMAKE_BINARY_DIR}/include" "${BBR}" "${BBR_HELPERS}")
-      target_compile_definitions(${t} PRIVATE
-        JIT_ARM64 ARCHITECTURE_x86_64=1 FEXCORE_PRESERVE_ALL_ATTR= FEXCORE_HAS_PRESERVE_ALL_ATTR=0)
+      target_compile_definitions(${t} PRIVATE ${BBR_FEX_DEFS})
       target_compile_options(${t} PRIVATE -Wall -Wno-trigraphs -fwrapv -march=${BB_RECOMP_MARCH})
       target_link_libraries(${t} PRIVATE FEXCore FEXCore_Base CodeEmitter FEXHeaderUtils ${BBR_JEMALLOC_DUMMY} fmt::fmt pthread)
       add_dependencies(${t} IR_INC CONFIG_INC)
@@ -88,6 +97,13 @@ if(BB_RECOMP_LLVM)
     # which a static glibc cannot do: glibc stays dynamic (the toolchain file builds against glibc 2.35), libstdc++ and libgcc static.
     if(WIN32 OR NOT BB_RECOMP_SDL_PREFIX)
       target_link_options(bb-recomp PRIVATE -static)
+    endif()
+    # Static AArch64 glibc: its objects reach their GOT slots with R_AARCH64_LD64_GOTPAGE_LO15 (15 bits: the first 32 KB of the GOT), and LLD does not
+    # check the range. LLVM, LLD and libstdc++ (all PIC) need ~4400 slots: libc's and libm's slots, which are allocated in the order the objects are
+    # loaded, would land beyond 32 KB and wrap (crash in __libc_start_main: "Unexpected reloc type in static binary"). So libc.a and libm.a are linked
+    # whole before every other input (arm64/build.sh makes the two archives without the members that crt1.o and crtbeginT.o replace).
+    if(ARCHITECTURE_arm64 AND BB_RECOMP_EARLY_LIBS_DIR)
+      target_link_options(bb-recomp PRIVATE -Wl,--whole-archive "${BB_RECOMP_EARLY_LIBS_DIR}/libc-early.a" "${BB_RECOMP_EARLY_LIBS_DIR}/libm-early.a" -Wl,--no-whole-archive)
     endif()
   endif()
 endif()

@@ -33,7 +33,7 @@ static void usage() {
         "  --funcs <file>       compare the FDE list with a 'start end' hex list (ehscan.py output)\n"
         "  --out <dir>          census output directory (default out/recomp)\n"
         "  --jobs <n>           worker threads (default: cores - 2, at most 22; fewer when the memory budget needs it)\n"
-        "  --limit <n>, --every <n>   census only the first n functions / every nth function\n"
+        "  --limit <n>, --every <n>   census (and compile) only the first n functions / every nth function\n"
         "  --base <hex>         host address of image vaddr 0 (default 0x3a7700000000: no plain constant of the game falls in it)\n"
         "  --host <profile>     target features: armv8.2 | armv8.4 (default) | armv9\n"
         "  --no-multiblock      one basic block per unit (FEX default is multiblock; the game ships Multiblock=1)\n"
@@ -233,7 +233,7 @@ int recompMain(int argc, char** argv) {
   if (dump) return dumpFunction(img, funcs, strtoull(dumpArg.c_str(), nullptr, 16), co.lift);
 #ifdef BB_RECOMP_LLVM
   if (!cc.llPath.empty() || !cc.objPath.empty() || !cc.soPath.empty() || cc.planOnly || cc.unitsOnly || !cc.unitsDump.empty() || !cc.checkEntries.empty()) {
-    cc.lift = co.lift; cc.jobs = co.jobs; cc.limit = co.limit; cc.jobsFixed = jobsSet; cc.shardsFixed = shardsSet;
+    cc.lift = co.lift; cc.jobs = co.jobs; cc.limit = co.limit; cc.every = co.every; cc.jobsFixed = jobsSet; cc.shardsFixed = shardsSet;
     if (!shardsSet && !cc.llPath.empty() && cc.objPath.empty() && cc.soPath.empty()) cc.shards = 1;
     return runCompile(img, funcs, cc);
   }
