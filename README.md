@@ -5,7 +5,7 @@ The [Bloodborne Android port](https://github.com/ducvd89/Bloodborne-Android) run
 time from **your own** copy of the game, once, into a file (`libbbaot.so`). This tool does that recompiling. You can run it in two places:
 
 - **on the phone**, inside the app (Bloodborne Android **2.1.0 Beta** or newer): no PC needed;
-- **on a PC** (Windows or Linux), from your PKG files or an already extracted game, and copy the result to the phone.
+- **on a PC** (Windows, Linux, or a Mac with Apple Silicon), from your PKG files or an already extracted game, and copy the result to the phone.
 
 > **Version 1.2.0** writes native code with **ABI version 2**. It needs the app **2.1.0 Beta or newer**, and app 2.1.0 needs a library from tool 1.2.0. Libraries built by
 > tool 1.1.0 or older (ABI 1) are refused by the app and must be rebuilt: they contain a bug that can stop the game with `guest trap (0x800d0b, 0x287188a)`.
@@ -53,7 +53,7 @@ You build the native code on a PC from your own game files and copy it to the ph
 | | |
 |---|---|
 | **Game files** | B1 or B2 above: Bloodborne **1.09** with the original `eboot.bin` (pre-patched 60 FPS eboots are refused). Tested with **CUSA03173**; other releases of 1.09 should work but are untested. |
-| **PC** | Windows 10 (1903+) / 11, 64-bit, or Linux with glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36, Arch or newer). A processor with AVX2 (Intel 2013+ or any AMD Ryzen). |
+| **PC** | Windows 10 (1903+) / 11, 64-bit, or Linux with glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36, Arch or newer): a processor with AVX2 (Intel 2013+ or any AMD Ryzen). Or a Mac with Apple Silicon (M1 or newer) and macOS 14.4+. |
 | **Memory / disk** | 8 GB free RAM (16 GB+ is faster). Free disk space: about 3 GB, plus the size of the base game PKG for B1. |
 | **Phone** | The Bloodborne Android app **2.1.0 Beta or newer**. |
 
@@ -65,6 +65,10 @@ Download it from the [latest release](https://github.com/ducvd89/Bloodborne-andr
 - **Windows:** `bb-recomp-windows-x86_64.zip`. Unzip it anywhere and double-click `bb-recomp.exe`. If Windows
   SmartScreen warns that the app is unknown, click **More info → Run anyway** (the tool is not signed with a
   paid certificate).
+- **macOS (Apple Silicon):** `bb-recomp-macos-arm64.zip`. Unzip it and move **Bloodborne Android Rebuild Tool** to Applications.
+  The app is not notarized: the first time, **right-click it → Open → Open** (or run
+  `xattr -dr com.apple.quarantine "/Applications/Bloodborne Android Rebuild Tool.app"`). Intel Macs are not supported.
+  Built from the [`macos`](https://github.com/ducvd89/Bloodborne-android-rebuild-tool/tree/macos) branch, which also has its build instructions.
 - **Linux:** `Bloodborne-Android-Rebuild-Tool-x86_64.AppImage`. Make it executable
   (`chmod +x Bloodborne-Android-Rebuild-Tool-x86_64.AppImage`) and double-click it. If nothing happens, your
   system lacks FUSE 2: run it from a terminal with `./Bloodborne-Android-Rebuild-Tool-x86_64.AppImage --appimage-extract-and-run`.
@@ -105,7 +109,8 @@ It is free. If you paid for it, you were scammed.
 
    **Open the folder** opens it.
 
-Prefer a terminal? The same program runs without a window (on Linux, pass the same arguments to the AppImage):
+Prefer a terminal? The same program runs without a window (on Linux, pass the same arguments to the AppImage; on macOS the program is
+`"/Applications/Bloodborne Android Rebuild Tool.app/Contents/MacOS/bb-recomp"`):
 
 ```
 bb-recomp --pkgs <PKG folder> --out <output folder>                   # B1
