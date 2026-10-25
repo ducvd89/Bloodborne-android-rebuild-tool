@@ -930,6 +930,18 @@ void Lower::run() {
     B.CreateRetVoid();
     res->resumeCases = cases.size() + bbCases.size();
     if (granular) { res->granularUnits = 1; res->granularCases = cases.size() + bbCases.size(); }
+  } else if (m.O.resumeEntries || granular) {
+    // No case here, but a probe (flag set, rip = the wanted address) must still be declined: returning at once with the flag set, so the dispatcher tries
+    // the next unit. Running the unit's own code from its entry would execute something the jump never targeted.
+    auto* fi = newBB("flags");
+    auto* decline = newBB("decline");
+    auto* flag = B.CreateAlignedLoad(I64, gep(offsetof(Core::CPUState, _pad1)), Align(8));
+    B.CreateCondBr(B.CreateICmpNE(flag, c64(0)), decline, fi);
+    B.SetInsertPoint(decline);
+    B.CreateRetVoid();
+    B.SetInsertPoint(fi);
+    flagsInit();
+    B.CreateBr(bbOf[order[0]]);
   } else {
     flagsInit();
     B.CreateBr(bbOf[order[0]]);

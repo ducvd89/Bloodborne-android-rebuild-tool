@@ -254,7 +254,7 @@ std::string runResumeTest(int opt) {
   Jit jit(img, lo, ts);
   jit.resumeEntries = true;
   g_jit = &jit;
-  jit.rangeEnd = [](uint64_t t) -> uint64_t { return t >= CodeBase && t < CodeBase + sizeof code ? CodeBase + sizeof code : 0; };
+  jit.rangeEnd = [](uint64_t t) -> uint64_t { return t >= CodeBase && t < CodeBase + sizeof code ? CodeBase + sizeof code : t == CodeBase + 0x100 ? CodeBase + 0x102 : 0; };
   if (!jit.err.empty()) return "FAIL jit init: " + jit.err;
   alignas(64) static CPUState st;
   static CPUState::gdt_segment gdt[32];
@@ -294,6 +294,8 @@ std::string runResumeTest(int opt) {
 // the resume flag set and rip at the address: it continues there with the registers in the guest state and the flags from the context (flags are
 // live across a jump, unlike after a call); at an address that is no instruction boundary it returns at once with the flag still set.
 //     @0 mov rbx, 5 ; @7 add rbx, 3 ; @11 mov rax, rbx ; @14 cmp rbx, 100 ; @18 jge @24 ; @20 add rax, 1 ; @24 hlt
+// A second unit of the same function at +0x100 starts with `cli` (a trap, no instruction boundary to enter at: a unit without cases): a probe must be
+// declined there too (return at once, flag still set), not run its code.
 std::string runGranularTest(int opt) {
   static const uint8_t code[] = {0x48, 0xc7, 0xc3, 5, 0, 0, 0,  0x48, 0x83, 0xc3, 3,  0x48, 0x89, 0xd8,  0x48, 0x83, 0xfb, 100,  0x7d, 4,  0x48, 0x83, 0xc0, 1,  0xf4};
   mapFixed(0xe8000000 - PageSz, PageSz * 2);
@@ -318,8 +320,12 @@ std::string runGranularTest(int opt) {
     st.gregs[4] = 0xe8000000;
   };
   if (!jit.compile(CodeBase, CodeBase + sizeof code)) return "FAIL compile: " + jit.err + jit.liftFailure;
+  const uint8_t trapCode[] = {0xfa, 0xf4};
+  memcpy((void*)(CodeBase + 0x100), trapCode, sizeof trapCode);
+  if (!jit.compile(CodeBase + 0x100, CodeBase + 0x102)) return "FAIL compile (trap unit): " + jit.err + jit.liftFailure;
   Jit::Fn entry = jit.find(CodeBase);
-  if (!entry) return "FAIL no entry";
+  Jit::Fn trapUnit = jit.find(CodeBase + 0x100);
+  if (!entry || !trapUnit) return "FAIL no entry";
   struct sigaction sa {}; sa.sa_handler = jitOnSignal; sigemptyset(&sa.sa_mask); sa.sa_flags = SA_NODEFER | SA_ONSTACK;
   static char altstack[1 << 16];
   stack_t ss {}; ss.ss_sp = altstack; ss.ss_size = sizeof altstack; sigaltstack(&ss, nullptr);
@@ -358,6 +364,12 @@ std::string runGranularTest(int opt) {
   }
   for (uint64_t bad : {1ull, 3ull, 9ull, 12ull, 15ull, 19ull, 21ull, 25ull})
     if (run(CodeBase + bad, 1, 0, 0, 0) != 1 || st._pad1 != 1) return "FAIL a non-boundary address (+" + std::to_string(bad) + ") must return at once with the flag set, flag " + std::to_string(st._pad1);
+  {
+    // the unit without cases is probed for an address it does not hold: it must decline, not run `cli`
+    reset(); st.rip = CodeBase + 8; st._pad1 = 1; g_haltKind = 0;
+    if (sigsetjmp(g_halt, 1) == 0) { trapUnit(&st); if (st._pad1 != 1) return "FAIL a unit without cases cleared the resume flag"; }
+    else return "FAIL a unit without cases ran its own code on a probe (halt kind " + std::to_string(g_haltKind) + ")";
+  }
   alarm(0);
   return "PASS";
 }

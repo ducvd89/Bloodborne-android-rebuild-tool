@@ -183,7 +183,8 @@ instruction boundary it holds (the resume-entry switch of the call-return blocks
   Entering from the switch loads the flags from the context (flags are live across a jump, unlike after a call: the jumping unit stored them).
 - **Protocol** (the resume flag, `GuestState::_pad1`, offset 0xb8): the dispatcher sets `s->rip = target; s->_pad1 = 1` and calls a unit of the function. A unit that
   holds the address clears the flag and runs the code from there, as if the jump had gone to it (a `ret` in it returns to the caller of the function: the target was a
-  jump, or a call whose return address is on the stack); a unit that does not returns at once with the flag still set. The dispatcher tries the function's units
+  jump, or a call whose return address is on the stack); a unit that does not returns at once with the flag still set. Every unit of a granular function declines this way, also one with no instruction boundary to enter at (its code starts with a trap, say): the check
+  (`_pad1 != 0` -> return, flag untouched) is emitted whether or not the unit has cases, so a probe never runs a unit's own code from its entry. The dispatcher tries the function's units
   (`bbr_funcs[]`, entry unit first) until the flag is clear. A dirty unit returns at once (flag set), a patch variant of a granular function has the same switch.
 - **Exports:** `bbr_func_granular[bbr_func_count]` (u8, 1 = granular) and bit 4 of `bbr_abi_flags`.
 - **Runtime:** on a miss (`bbr_dispatch`, `bbr_dispatch_tail`, a return to an address in no unit, `bbr_unwound`) the engine asks `GranularEntry` before anything else.
