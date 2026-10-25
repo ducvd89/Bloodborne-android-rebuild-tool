@@ -23,7 +23,7 @@ It is **new**: it has been tested on the AYN Thor (Snapdragon 8 Gen 2). If the g
 
 ## Two ways to build it
 
-- **On the phone, in the app** (app 2.1.0 Beta or newer): menu > Native CPU > **Build on this phone**. The app runs the same compiler as this tool on the
+- **On the phone, in the app** (app 2.1.0 Beta or newer): **Build on this phone** in the "Native code needed" dialog the app shows at start (later rebuilds: menu > Native CPU > **Rebuild on this phone**). The app runs the same compiler as this tool on the
   game image it already has. No PC, no copying. It takes about **6 minutes** on a Snapdragon 8 Gen 2 with the charger connected (the phone gets hot), needs
   about **4 GB of free RAM** and **1 GB of free storage** while it works, and writes the same `libbbaot.so` and `libbbaot.json` a PC would (byte for byte
   the same library for the same game and tool version). See "The phone build" at the end for what the app runs.

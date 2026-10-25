@@ -31,7 +31,7 @@ your game: keep them for yourself and **never share them**.
 
 ### A. On the phone
 
-In the app open the menu, choose **Native CPU**, then **Build on this phone**, and keep the app open with the charger connected until it is done. The app shows a progress bar and an estimate of the time
+When the app has no native code for its version it shows **Native code needed**: choose **Build on this phone** (later rebuilds: menu > **Native CPU** > **Rebuild on this phone**), and keep the app open with the charger connected until it is done. The app shows a progress bar and an estimate of the time
 left. The phone gets warm and slows down if it overheats: take it out of its case and do not use it for other things. If the app is stopped or the phone restarts, start the build again:
 the parts that were finished are kept. The tool inside the app is the same program as the PC tool (the same compiler, the same output: the library is the same file byte for byte).
 
