@@ -10,6 +10,17 @@
 #include <string>
 #include <vector>
 
+// The default lift base: the host address image vaddr 0 is mapped at while lifting. The lowering takes every 64-bit IR constant in [base, base + image size) for an
+// image address (FEX folds rip-relative arithmetic into such constants) and relocates it to the runtime's image base, so a plain constant of the game that
+// falls into the window would be relocated by mistake (with the old base 0x200000000 two packed 32-bit integers such as `movabs rax, 0x200000002` became
+// image + 2 on the Thor). The base is hi << 32 (the low word of an entry-point offset is then the vaddr) and hi < 0x80, so that it also fits the 39-bit user
+// address space of many Android kernels (user space ends at 0x8000000000). hi = 0x2b is the value for which Bloodborne 1.09 has no constant in the window:
+// the lowering relocates exactly the same 1,866,280 constants as with the old base 0x3a7700000000, and the library is byte-identical (docs/NATIVE_CPU.md).
+// (hi = 0x20, 0x23 and 0x26, for one, are inside plain constants: 7, 3 and 2 more constants would be relocated.)
+constexpr uint64_t kDefaultLiftBase = 0x2b00000000ull;
+// Bases to try when the default cannot be mapped (the address range is taken), see ElfImage::mapFailed. Each one was checked like the default.
+constexpr uint64_t kFallbackLiftBases[] = {0x3d00000000ull, 0x4700000000ull};
+
 struct ElfSegment {
   uint64_t vaddr, filesz, memsz, offset;
   uint32_t flags; // PF_X 1, PF_W 2, PF_R 4
@@ -45,6 +56,7 @@ struct ElfImage {
   std::vector<ModuleInfo> modules;       // module 0 is the eboot; boot mode adds the linked modules
   BootLinks links;                       // boot mode only
   bool boot = false;
+  bool mapFailed = false;                // load/loadBoot failed because the address range at `base` cannot be mapped (the caller may try another base)
 
   // Reads the file and maps every PT_LOAD at base + vaddr (anonymous memory, filled from the file).
   // The mapping stays for the life of the process. Returns false and sets err on failure.

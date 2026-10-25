@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "progress.h"
 #include "variant_compile.h"
 
+#include <cerrno>
+#include <cstring>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
@@ -93,7 +96,7 @@ class Pool {
       if (!tm) { failed = true; continue; }
       if (job.verify) {
         std::string e; raw_string_ostream os(e);
-        if (verifyModule(*b.mod, &os)) { fprintf(stderr, "bb-recomp: variant module %u: LLVM verifier: %s\n", b.index, e.substr(0, 2000).c_str()); failed = true; continue; }
+        if (verifyModule(*b.mod, &os)) { bbrError("variant module %u: LLVM verifier: %s", b.index, e.substr(0, 2000).c_str()); failed = true; continue; }
       }
       optimizeModule(*b.mod, *tm, job.target.opt);
       std::string obj;
@@ -101,7 +104,7 @@ class Pool {
       char nm[32]; snprintf(nm, sizeof nm, ".var%03u.o", b.index);
       const std::string path = job.objBase + nm;
       FILE* f = fopen(path.c_str(), "wb");
-      if (!f) { perror(path.c_str()); failed = true; continue; }
+      if (!f) { bbrError("%s: %s", path.c_str(), strerror(errno)); failed = true; continue; }
       fwrite(obj.data(), 1, obj.size(), f);
       fclose(f);
       std::lock_guard<std::mutex> lk(mu);
@@ -191,8 +194,13 @@ bool compileVariants(const VariantJob& job, VariantResult& out) {
 
   auto unitSet = [&](const std::vector<Unit>& us) { std::set<uint64_t> s; for (auto& u : us) s.insert(u.entry); return s; };
 
+  size_t nTouch = 0, seenTouch = 0;
+  for (auto& t : touch) if (!t.empty()) ++nTouch;
+  if (nTouch) bbrWork("variants", 0, nTouch);
   for (size_t fi = 0; fi < funcs.size(); ++fi) {
     if (touch[fi].empty()) continue;
+    if (bbrStopRequested()) break;
+    bbrWork("variants", seenTouch++, nTouch);
     const Func& F = funcs[fi];
     {
       auto it = std::lower_bound(job.trapUnits->begin(), job.trapUnits->end(), F.start);
@@ -326,6 +334,7 @@ bool compileVariants(const VariantJob& job, VariantResult& out) {
     }
   }
   flush();
+  if (nTouch && !bbrStopRequested()) bbrWork("variants", nTouch, nTouch);
   const bool ok = pool.finish();
   out.objFiles = pool.files;
   std::sort(out.objFiles.begin(), out.objFiles.end());

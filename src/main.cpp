@@ -7,15 +7,23 @@
 #include "discover.h"
 #include "eh_frame.h"
 #include "fde_scan.h"
+#include "progress.h"
+#include "version.h"
 #ifdef BB_RECOMP_LLVM
 #include "compile.h"
 #include "bundle.h"
 #endif
+#ifdef BB_RECOMP_PLAYER
+#include "aot_json.h"
+#endif
 #include <chrono>
+#include <cerrno>
 #include <cinttypes>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <thread>
 #ifndef _WIN32
 #include <sys/resource.h>
@@ -28,13 +36,22 @@ static void usage() {
         "                       system modules (libc.prx ...) at their image offsets, one image, one unit table. --elf then only\n"
         "                       supplies the eboot's program headers\n"
         "  --prx-dir <dir>      where the .prx files of --boot are (default: <game>/sce_module next to out/)\n"
+        "  --game-dir <dir>     the game folder (eboot.bin, sce_module/, sce_sys/param.sfo): with --boot it stands in for --elf and --prx-dir (eboot.bin\n"
+        "                       and the .prx files are read for their program headers only), and with --so it also writes libbbaot.json (the format of\n"
+        "                       player mode) next to the .so: the whole phone build is --boot, --game-dir and --so (docs/NATIVE_CPU.md, \"On the phone\")\n"
+        "  --json <file>        where libbbaot.json goes (default: next to the .so); with --game-dir\n"
+        "  --progress           machine-readable lines on stdout: BBR-PROGRESS <stage> <done> <total>, BBR-ERROR <message>, BBR-DONE <exit status>\n"
+        "  --resume             keep every finished shard (its object and a .stat file next to the .so) and reuse those a restart finds for the same inputs\n"
+        "  --clean-work         after a successful build delete the work files next to the .so (objects, .stat files, the stub and helper objects)\n"
+        "                       SIGTERM / SIGINT stop the build at the next function boundary (exit status 143 / 130); the finished shards stay\n"
         "  --dump <hex vaddr>   print the FEX IR of the function containing the address\n"
         "  --scan               list function count and range statistics only\n"
         "  --funcs <file>       compare the FDE list with a 'start end' hex list (ehscan.py output)\n"
         "  --out <dir>          census output directory (default out/recomp)\n"
         "  --jobs <n>           worker threads (default: cores - 2, at most 22; fewer when the memory budget needs it)\n"
         "  --limit <n>, --every <n>   census (and compile) only the first n functions / every nth function\n"
-        "  --base <hex>         host address of image vaddr 0 (default 0x3a7700000000: no plain constant of the game falls in it)\n"
+        "  --base <hex>         host address of image vaddr 0 (default 0x2b00000000: no plain constant of the game falls in it;\n"
+        "                       a multiple of 4 GB below 0x8000000000, so that it also fits a 39-bit address space; others are tried when it cannot be mapped)\n"
         "  --host <profile>     target features: armv8.2 | armv8.4 (default) | armv9\n"
         "  --no-multiblock      one basic block per unit (FEX default is multiblock; the game ships Multiblock=1)\n"
         "  --tso                lift with x86 TSO memory ordering (the game runs with it off)\n"
@@ -76,13 +93,81 @@ static void usage() {
         "  --stats <file>       also write the compile summary here\n", stderr);
 }
 
+namespace {
+using clk = std::chrono::steady_clock;
+bool g_prog = false;  // --progress
+std::mutex g_progMu;
+std::string g_progStage;
+uint64_t g_progLast = ~0ull;
+clk::time_point g_progAt;
+
+// BBR-PROGRESS lines (docs/NATIVE_CPU.md): the first of a stage, the last one (done >= total) and otherwise at most four a second, only when `done` grew.
+void workHook(const char* stage, uint64_t done, uint64_t total) {
+  std::lock_guard<std::mutex> g(g_progMu);
+  const auto now = clk::now();
+  const bool fresh = g_progStage != stage;
+  if (!fresh && (done <= g_progLast || (done < total && now - g_progAt < std::chrono::milliseconds(250)))) return;   // (threads report out of order: never backwards)
+  g_progStage = stage; g_progLast = done; g_progAt = now;
+  printf("BBR-PROGRESS %s %" PRIu64 " %" PRIu64 "\n", stage, done, total);
+  fflush(stdout);
+}
+
+// What --progress prints at the end of every run: BBR-ERROR (a failure that has a message), BBR-DONE <exit status>.
+void progressEnd(int rc) {
+  if (rc == 0) workHook("done", 1, 1);
+  else if (rc != 128 + SIGTERM && rc != 128 + SIGINT) { std::string m = bbrLastError(); if (m.empty()) m = "failed (exit status " + std::to_string(rc) + ")"; for (char& c : m) if (c == '\n' || c == '\r') c = ' '; printf("BBR-ERROR %s\n", m.c_str()); }
+  printf("BBR-DONE %d\n", rc);
+  fflush(stdout);
+}
+
+[[noreturn]] void usageExit() {
+  usage();
+  if (g_prog) { bbrError("bad command line (bb-recomp --help)"); progressEnd(2); }
+  exit(2);
+}
+
+// SIGTERM / SIGINT: the workers see the flag between two functions (and shards) and return; a watchdog ends the process when something does not (a long
+// optimiser or code generator run, the linker) within a few seconds. Handlers that player mode installed stay.
+void onStopSignal(int sig) { g_bbrStopSignal = sig; }
+void installStopHandlers() {
+  bool any = false;
+  for (int sig : {SIGTERM, SIGINT}) {
+    auto prev = signal(sig, onStopSignal);
+    if (prev != SIG_DFL) signal(sig, prev); else any = true;
+  }
+  if (!any) return;
+  std::thread([] {
+    for (;;) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      const int sig = g_bbrStopSignal.load();
+      if (!sig) continue;
+      std::this_thread::sleep_for(std::chrono::seconds(8));
+      if (g_prog) progressEnd(128 + sig);
+      fflush(stdout);
+      std::_Exit(128 + sig);
+    }
+  }).detach();
+}
+int stoppedStatus() { return 128 + g_bbrStopSignal.load(); }
+} // namespace
+
+static int recompRun(int argc, char** argv);
+
+// The command line tool. With --progress it ends every run with BBR-DONE (see progressEnd).
 int recompMain(int argc, char** argv) {
-  std::string elf = "out/eboot.elf", funcsFile, dumpArg, bootFile, prxDir, extraFile;
-  // The lift base. The lowering takes a 64-bit IR constant inside [base, base + image size) for an image address (FEX folds
-  // rip-relative arithmetic into such constants) and relocates it to the runtime's image base. With the old base 0x200000000
-  // two packed 32-bit integers such as `movabs rax, 0x200000002` (2 and 2) became image + 2 on the Thor (a count of
-  // 0x104002 -> a 1 GB allocation -> null). Nothing but rip-derived values lands in this high, odd window.
-  uint64_t base = 0x3a7700000000ull;
+  for (int i = 1; i < argc; ++i) if (!strcmp(argv[i], "--progress")) g_prog = true;
+  if (!g_prog) return recompRun(argc, argv);
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+  g_progress.work = workHook;
+  const int rc = recompRun(argc, argv);
+  progressEnd(rc);
+  return rc;
+}
+
+static int recompRun(int argc, char** argv) {
+  std::string elf = "out/eboot.elf", funcsFile, dumpArg, bootFile, prxDir, extraFile, gameDir, jsonFile;
+  bool elfSet = false, baseSet = false, resume = false, cleanWork = false;
+  uint64_t base = kDefaultLiftBase;  // see elf_image.h
   bool scanOnly = false, nice = true, dump = false, noSecondary = false, noDiscovery = false;
   CensusOptions co;
 #ifdef BB_RECOMP_LLVM
@@ -95,10 +180,15 @@ int recompMain(int argc, char** argv) {
   co.jobs = std::min(22u, hw > 2 ? hw - 2 : 1u);
   for (int i = 1; i < argc; ++i) {
     auto is = [&](const char* s) { return !strcmp(argv[i], s); };
-    auto arg = [&]() -> const char* { if (i + 1 >= argc) { usage(); exit(2); } return argv[++i]; };
-    if (is("--elf")) elf = arg();
+    auto arg = [&]() -> const char* { if (i + 1 >= argc) usageExit(); return argv[++i]; };
+    if (is("--elf")) { elf = arg(); elfSet = true; }
     else if (is("--boot")) bootFile = arg();
     else if (is("--prx-dir")) prxDir = arg();
+    else if (is("--game-dir")) gameDir = arg();
+    else if (is("--json")) jsonFile = arg();
+    else if (is("--progress")) {}   // handled by recompMain
+    else if (is("--resume")) resume = true;
+    else if (is("--clean-work")) cleanWork = true;
     else if (is("--dump")) { dump = true; dumpArg = arg(); }
     else if (is("--scan")) scanOnly = true;
     else if (is("--funcs")) funcsFile = arg();
@@ -106,7 +196,7 @@ int recompMain(int argc, char** argv) {
     else if (is("--jobs")) { co.jobs = std::max(1, atoi(arg())); jobsSet = true; }
     else if (is("--limit")) co.limit = strtoull(arg(), nullptr, 0);
     else if (is("--every")) co.every = std::max<uint64_t>(1, strtoull(arg(), nullptr, 0));
-    else if (is("--base")) base = strtoull(arg(), nullptr, 16);
+    else if (is("--base")) { base = strtoull(arg(), nullptr, 16); baseSet = true; }
     else if (is("--host")) co.lift.host = arg();
     else if (is("--no-multiblock")) co.lift.multiblock = false;
     else if (is("--tso")) co.lift.tso = true;
@@ -125,12 +215,12 @@ int recompMain(int argc, char** argv) {
     else if (is("--emit-ll")) { std::string a = arg(); cc.llPath = arg(); if (a == "all") cc.onlyVaddr = -1; else cc.onlyVaddr = strtoll(a.c_str(), nullptr, 16); }
     else if (is("--obj")) cc.objPath = arg();
     else if (is("--so")) cc.soPath = arg();
-    else if (is("--target")) { std::string t = arg(); if (t == "aarch64") cc.target.aarch64 = true; else if (t == "x86_64") cc.target.aarch64 = false; else { usage(); return 2; } }
+    else if (is("--target")) { std::string t = arg(); if (t == "aarch64") cc.target.aarch64 = true; else if (t == "x86_64") cc.target.aarch64 = false; else usageExit(); }
     else if (is("-O0")) cc.target.opt = 0;
     else if (is("-O1")) cc.target.opt = 1;
     else if (is("-O2")) cc.target.opt = 2;
     else if (is("--shards")) { cc.shards = std::max(1, atoi(arg())); shardsSet = true; }
-    else if (is("--granular")) { std::string g = arg(); if (g == "off") cc.granular = CompileOptions::Granular::Off; else if (g == "jumps") cc.granular = CompileOptions::Granular::Jumps; else if (g == "all") cc.granular = CompileOptions::Granular::All; else { usage(); return 2; } }
+    else if (is("--granular")) { std::string g = arg(); if (g == "off") cc.granular = CompileOptions::Granular::Off; else if (g == "jumps") cc.granular = CompileOptions::Granular::Jumps; else if (g == "all") cc.granular = CompileOptions::Granular::All; else usageExit(); }
     else if (is("--granular-funcs")) cc.granularList = arg();
     else if (is("--dump-units")) cc.unitsDump = arg();
     else if (is("--check-entries")) {
@@ -160,21 +250,47 @@ int recompMain(int argc, char** argv) {
     else if (is("--stats")) cc.statsPath = arg();
     else if (is("--func")) cc.onlyVaddr = strtoll(arg(), nullptr, 16);
 #endif
-    else { usage(); return 2; }
+    else usageExit();
   }
   co.jobs = std::min(co.jobs, 22u); // 2 of 24 cores stay free on the dev PC
 #ifndef _WIN32
   if (nice) setpriority(PRIO_PROCESS, 0, 19);
 #endif
-  ElfImage img; std::string err;
-  if (bootFile.empty()) {
-    if (!img.load(elf, base, err)) { fprintf(stderr, "bb-recomp: %s\n", err.c_str()); return 1; }
-  } else {
-    if (prxDir.empty()) { fprintf(stderr, "bb-recomp: --boot needs --prx-dir <game folder>/sce_module\n"); return 1; }
-    if (!img.loadBoot(bootFile, elf, prxDir, base, err)) { fprintf(stderr, "bb-recomp: %s\n", err.c_str()); return 1; }
+  installStopHandlers();
+  // --game-dir: the game folder stands in for --elf and --prx-dir (the .prx files and eboot.bin are SELF files: their ELF program headers are read as they are).
+  if (!gameDir.empty()) {
+    while (gameDir.size() > 1 && (gameDir.back() == '/' || gameDir.back() == '\\')) gameDir.pop_back();
+    if (!bootFile.empty() && !elfSet) elf = gameDir + "/eboot.bin";
+    if (!bootFile.empty() && prxDir.empty()) prxDir = gameDir + "/sce_module";
   }
+#ifdef BB_RECOMP_LLVM
+  const bool writesSo = !cc.soPath.empty();
+#else
+  const bool writesSo = false;
+#endif
+  if (!gameDir.empty() && !writesSo && !jsonFile.empty()) { bbrError("--json needs --so (the json describes the .so)"); return 2; }
+  if (!gameDir.empty() && bootFile.empty() && writesSo) { bbrError("--game-dir writes libbbaot.json for a --boot image: give --boot too"); return 2; }
+#ifndef BB_RECOMP_PLAYER
+  if (!gameDir.empty() && writesSo) { bbrError("this build cannot write libbbaot.json (--game-dir with --so)"); return 2; }
+#endif
+  ElfImage img; std::string err;
+  {
+    // The default base is tried first; when its address range cannot be mapped (a different kernel layout), the fallbacks (see elf_image.h). A base given with --base is the only one.
+    std::vector<uint64_t> bases {base};
+    if (!baseSet) for (uint64_t b : kFallbackLiftBases) bases.push_back(b);
+    if (!bootFile.empty() && prxDir.empty()) { bbrError("--boot needs --game-dir <game folder> or --prx-dir <game folder>/sce_module"); return 1; }
+    for (size_t bi = 0; bi < bases.size(); ++bi) {
+      img = ElfImage(); err.clear();
+      const bool ok = bootFile.empty() ? img.load(elf, bases[bi], err) : img.loadBoot(bootFile, elf, prxDir, bases[bi], err);
+      if (ok) break;
+      if (!img.mapFailed || bi + 1 == bases.size()) { bbrError("%s%s", err.c_str(), bi ? " (the other lift bases were tried too)" : ""); return 1; }
+      fprintf(stderr, "bb-recomp: %s; trying the lift base %#llx\n", err.c_str(), (unsigned long long)bases[bi + 1]);
+    }
+  }
+  if (bbrStopRequested()) return stoppedStatus();
   std::vector<Func> funcs;
-  if (!scanAllFdes(img, funcs, err)) { fprintf(stderr, "bb-recomp: %s\n", err.c_str()); return 1; }
+  bbrWork("scan", 0, 1);
+  if (!scanAllFdes(img, funcs, err)) { bbrError("%s", err.c_str()); return 1; }
   uint64_t bytes = 0, mn = ~0ull, mx = 0; for (auto& f : funcs) { bytes += f.end - f.start; mn = std::min(mn, f.start); mx = std::max(mx, f.end); }
   if (img.boot) {
     printf("boot image %s: %zu modules\n", bootFile.c_str(), img.modules.size());
@@ -187,7 +303,7 @@ int recompMain(int argc, char** argv) {
   printf("image %s: text vaddr %#" PRIx64 "-%#" PRIx64 " mapped at base %#" PRIx64 "; %zu FDE functions, %.1f MB, range %#" PRIx64 "-%#" PRIx64 "\n",
          elf.c_str(), img.textLo, img.textHi, img.base, funcs.size(), bytes / 1e6, mn, mx);
   if (!funcsFile.empty()) {
-    FILE* f = fopen(funcsFile.c_str(), "r"); if (!f) { perror(funcsFile.c_str()); return 1; }
+    FILE* f = fopen(funcsFile.c_str(), "r"); if (!f) { bbrError("%s: %s", funcsFile.c_str(), strerror(errno)); return 1; }
     unsigned long long s, e; size_t n = 0, bad = 0;
     while (fscanf(f, "%llx %llx", &s, &e) == 2) { if (n >= funcs.size() || funcs[n].start != s || funcs[n].end != e) ++bad; ++n; }
     fclose(f);
@@ -217,17 +333,21 @@ int recompMain(int argc, char** argv) {
   std::vector<uint64_t> extraEntries;
   if (!extraFile.empty()) {
     extraEntries = readEntryList(extraFile.c_str(), err);
-    if (!err.empty()) { fprintf(stderr, "bb-recomp: %s\n", err.c_str()); return 1; }
+    if (!err.empty()) { bbrError("%s", err.c_str()); return 1; }
     printf("extra entries: %zu addresses from %s\n", extraEntries.size(), extraFile.c_str());
-    if (noDiscovery) { fprintf(stderr, "bb-recomp: --extra-entries needs the discovery (not --no-discovery)\n"); return 2; }
+    if (noDiscovery) { bbrError("--extra-entries needs the discovery (not --no-discovery)"); return 2; }
   }
+  bbrWork("scan", 1, 1);
+  if (bbrStopRequested()) return stoppedStatus();
   if (!noDiscovery && !scanOnly) {
+    bbrWork("discover", 0, 1);
     const DiscoverResult d = discoverEntries(img, funcs, entryUnits, co.lift, co.jobs, extraEntries.empty() ? nullptr : &extraEntries);
     printf("discovery (%u rounds): %zu relocation pointers into code outside any FDE function (%zu did not decode), %zu more through rip-relative lea, %zu through branches: %zu functions added (%.2f MB), %zu call/jmp targets inside functions that no unit started at\n",
            d.rounds, d.relocCandidates, d.relocRejected, d.leaCandidates, d.branchCandidates, d.pseudoFuncs, d.pseudoBytes / 1e6, d.midEntries);
     if (!extraEntries.empty())
       printf("  extra entries: %zu addresses: %zu already function starts, %zu in the middle of functions (units), %zu new pseudo-functions, %zu rejected (outside the image or not code)\n",
              d.extraGiven, d.extraFuncStarts, d.extraMid, d.extraNew, d.extraRejected);
+    if (bbrStopRequested()) return stoppedStatus();
   }
   if (scanOnly) return 0;
   if (dump) return dumpFunction(img, funcs, strtoull(dumpArg.c_str(), nullptr, 16), co.lift);
@@ -235,7 +355,26 @@ int recompMain(int argc, char** argv) {
   if (!cc.llPath.empty() || !cc.objPath.empty() || !cc.soPath.empty() || cc.planOnly || cc.unitsOnly || !cc.unitsDump.empty() || !cc.checkEntries.empty()) {
     cc.lift = co.lift; cc.jobs = co.jobs; cc.limit = co.limit; cc.every = co.every; cc.jobsFixed = jobsSet; cc.shardsFixed = shardsSet;
     if (!shardsSet && !cc.llPath.empty() && cc.objPath.empty() && cc.soPath.empty()) cc.shards = 1;
-    return runCompile(img, funcs, cc);
+    cc.resume = resume;
+    int rc = runCompile(img, funcs, cc);
+#ifdef BB_RECOMP_PLAYER
+    if (rc == 0 && writesSo && !gameDir.empty()) {
+      // libbbaot.json, as player mode writes it: the game's ids from sce_sys/param.sfo, the facts of the finished .so (read back and checked against the boot image).
+      bbrWork("json", 0, 1);
+      GameMeta meta; SoInfo so; uint64_t imageSize = 0;
+      std::string js = jsonFile;
+      if (js.empty()) { js = cc.soPath; if (js.size() > 3 && js.compare(js.size() - 3, 3, ".so") == 0) js.resize(js.size() - 3); js += ".json"; }
+      std::string e = readGameMeta(gameDir, meta);
+      if (e.empty()) e = checkAndWriteAotJson(cc.soPath, bootFile, meta, js, so, imageSize);
+      if (!e.empty()) { bbrError("%s", e.c_str()); rc = 1; }
+      else {
+        printf("%s: %s %s, version %s, ABI version %u, %" PRIu64 " units in %" PRIu64 " functions, image hash %s, %.2f MB\n", js.c_str(), meta.titleId.c_str(), meta.title.c_str(), meta.version.c_str(), so.abiVersion, so.unitCount, so.funcCount, hex16(so.imageHash).c_str(), so.size / 1048576.0);
+        bbrWork("json", 1, 1);
+      }
+    }
+#endif
+    if (rc == 0 && cleanWork) for (const std::string& f : cc.workFiles) std::remove(f.c_str());
+    return rc;
   }
 #endif
   return runCensus(img, funcs, co);

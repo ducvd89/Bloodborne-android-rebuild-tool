@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "progress.h"
 #include "codegen.h"
 
 #include <llvm/Analysis/CGSCCPassManager.h>
@@ -29,11 +30,13 @@ void initLlvmTargets() {
   std::call_once(once, [] {
     LLVMInitializeAArch64TargetInfo(); LLVMInitializeAArch64Target(); LLVMInitializeAArch64TargetMC();
     LLVMInitializeAArch64AsmPrinter();
+#ifndef BBR_NO_X86  // (the phone build links only the AArch64 back end)
     LLVMInitializeX86TargetInfo(); LLVMInitializeX86Target(); LLVMInitializeX86TargetMC(); LLVMInitializeX86AsmPrinter();
     // LLVM 23 x86-fixup-bw-insts turns `movb 552(%rcx),%cl` into `movzbl` although the upper bits of rcx are live
     // (the byte-merge `(x & -256) | byte` loses x's upper bits). Only the x86 oracle path is affected.
     static const char* argv[] = {"bb-recomp", "-fixup-byte-word-insts=0"};
     cl::ParseCommandLineOptions(2, argv);
+#endif
   });
 }
 
@@ -44,7 +47,7 @@ std::unique_ptr<TargetMachine> makeTargetMachine(const TargetSpec& t, bool jit) 
   Triple tr = tripleOf(t);
   std::string err;
   const Target* tg = TargetRegistry::lookupTarget(tr, err);
-  if (!tg) { fprintf(stderr, "bb-recomp: no LLVM target for %s: %s\n", tr.str().c_str(), err.c_str()); return nullptr; }
+  if (!tg) { bbrError("no LLVM target for %s: %s", tr.str().c_str(), err.c_str()); return nullptr; }
   std::string cpu = t.cpu, feat = t.features;
   if (t.aarch64) {
     if (cpu.empty()) cpu = "generic";
@@ -81,7 +84,7 @@ void optimizeModule(Module& m, TargetMachine& tm, int level) {
                    "dse,instcombine<no-verify-fixpoint>,simplifycfg,adce,instcombine<no-verify-fixpoint>)";
   ModulePassManager mpm;
   if (auto e = pb.parsePassPipeline(mpm, level == 1 ? o1 : o2)) {
-    fprintf(stderr, "bb-recomp: bad pass pipeline: %s\n", toString(std::move(e)).c_str());
+    bbrError("bad pass pipeline: %s", toString(std::move(e)).c_str());
     return;
   }
   mpm.run(m, mam);
@@ -93,7 +96,7 @@ bool emitObject(Module& m, TargetMachine& tm, std::string& out) {
   raw_svector_ostream os(buf);
   legacy::PassManager pm;
   if (tm.addPassesToEmitFile(pm, os, nullptr, CodeGenFileType::ObjectFile)) {
-    fprintf(stderr, "bb-recomp: target cannot emit object files\n");
+    bbrError("target cannot emit object files");
     return false;
   }
   pm.run(m);

@@ -2,7 +2,9 @@
 #include "bundle.h"
 #include "progress.h"
 
+#include <cstdarg>
 #include <cstdio>
+#include <mutex>
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
@@ -29,9 +31,22 @@ LLD_HAS_DRIVER(elf)
 BBR_NO_TARGET(AMDGPU) BBR_NO_TARGET(ARM) BBR_NO_TARGET(AVR) BBR_NO_TARGET(BPF) BBR_NO_TARGET(Hexagon) BBR_NO_TARGET(Lanai) BBR_NO_TARGET(LoongArch)
 BBR_NO_TARGET(Mips) BBR_NO_TARGET(MSP430) BBR_NO_TARGET(NVPTX) BBR_NO_TARGET(PowerPC) BBR_NO_TARGET(RISCV) BBR_NO_TARGET(Sparc) BBR_NO_TARGET(SPIRV)
 BBR_NO_TARGET(SystemZ) BBR_NO_TARGET(VE) BBR_NO_TARGET(WebAssembly) BBR_NO_TARGET(XCore)
+#ifdef BBR_NO_X86
+BBR_NO_TARGET(X86)
+#endif
 #endif
 
 ProgressHooks g_progress;
+std::atomic<int> g_bbrStopSignal {0};
+namespace { std::mutex g_errMu; std::string g_lastError; }
+void bbrError(const char* fmt, ...) {
+  char b[2048];
+  va_list a; va_start(a, fmt); vsnprintf(b, sizeof b, fmt, a); va_end(a);
+  fprintf(stderr, "bb-recomp: %s\n", b);
+  std::lock_guard<std::mutex> g(g_errMu);
+  g_lastError = b;
+}
+std::string bbrLastError() { std::lock_guard<std::mutex> g(g_errMu); return g_lastError; }
 
 namespace {
 #ifdef BBR_BUNDLED

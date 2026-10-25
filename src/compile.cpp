@@ -2,6 +2,7 @@
 #include "compile.h"
 #include "bundle.h"
 #include "progress.h"
+#include "version.h"
 #include "lower_llvm.h"
 #include "variant_compile.h"
 
@@ -21,10 +22,13 @@
 #include <chrono>
 #include <cinttypes>
 #include <cstdarg>
+#include <cerrno>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <csignal>
 #include <mutex>
 #include <set>
 #include <thread>
@@ -256,12 +260,12 @@ bool emitTable(const std::vector<uint64_t>& ehHdrs, const std::vector<uint64_t>&
   new GlobalVariable(m, i64, true, GlobalValue::ExternalLinkage, ConstantInt::get(i64, (opt.resumeEntries ? 1 : 0) | (opt.dirtyCheck ? 2 : 0) | (haveVariants ? 4 : 0) | (haveHooks ? 8 : 0) |
                                                                                                                 (std::find(granularFlags.begin(), granularFlags.end(), 1) != granularFlags.end() ? 16 : 0)), "bbr_abi_flags");
   new GlobalVariable(m, i64, true, GlobalValue::ExternalLinkage, ConstantInt::get(i64, imageHash), "bbr_image_hash");
-  new GlobalVariable(m, i32, true, GlobalValue::ExternalLinkage, ConstantInt::get(i32, 1), "bbr_abi_version");
+  new GlobalVariable(m, i32, true, GlobalValue::ExternalLinkage, ConstantInt::get(i32, kBbrAbiVersion), "bbr_abi_version");
   new GlobalVariable(m, i64, false, GlobalValue::ExternalLinkage, ConstantInt::get(i64, 0), "bbr_image_base");
   std::string obj;
   if (!emitObject(m, tm, obj)) return false;
   FILE* f = fopen(path.c_str(), "wb");
-  if (!f) { perror(path.c_str()); return false; }
+  if (!f) { bbrError("%s: %s", path.c_str(), strerror(errno)); return false; }
   fwrite(obj.data(), 1, obj.size(), f);
   fclose(f);
   return true;
@@ -335,6 +339,72 @@ __attribute__((format(printf, 1, 2))) void say(const char* fmt, ...) {
   vfprintf(stdout, fmt, a); if (g_sf) vfprintf(g_sf, fmt, b);
   va_end(a); va_end(b);
 }
+// Resume (--resume): next to every shard object <path> a file <path>.stat holds the shard's statistics and a key over everything the shard's code depends on
+// (tool version, image, options, the unit set, the functions, the shard's function range). A restart reuses the shards whose key and object size match.
+struct KeyHash {
+  uint64_t a = 1469598103934665603ull, b = 0x9e3779b97f4a7c15ull;
+  void byte(uint8_t c) { a = (a ^ c) * 1099511628211ull; b = (b ^ c) * 0x100000001b3ull + (b >> 29); }
+  void u64(uint64_t v) { for (int i = 0; i < 8; ++i) byte((uint8_t)(v >> (8 * i))); }
+  void str(const std::string& t) { u64(t.size()); for (char c : t) byte((uint8_t)c); }
+  std::string hex() const { char t[40]; snprintf(t, sizeof t, "%016" PRIx64 "%016" PRIx64, a, b); return t; }
+};
+
+uint64_t* const* shardCounters(ShardStats& s, size_t& n) {
+  static thread_local uint64_t* p[24];
+  uint64_t* q[] = {&s.funcs, &s.units, &s.unitsWithTrap, &s.trapSites, &s.irOps, &s.directCalls, &s.dispatchCalls, &s.relocConsts, &s.liftFailed, &s.objBytes, &s.textBytes, &s.granularUnits,
+                   &s.granularCases, &s.volatileLoads, &s.resumeCases, &s.switches, &s.switchCases, &s.indJmps, &s.jmpResolved, &s.jmpScanned, &s.jmpMem, &s.jmpReg, &s.jmpFailed, &s.tableBytes};
+  n = sizeof q / sizeof q[0];
+  for (size_t i = 0; i < n; ++i) p[i] = q[i];
+  return p;
+}
+
+bool saveShard(const std::string& obj, const std::string& key, ShardStats& s) {
+  const std::string path = obj + ".stat", tmp = path + ".tmp";
+  FILE* f = fopen(tmp.c_str(), "w");
+  if (!f) return false;
+  size_t n; uint64_t* const* c = shardCounters(s, n);
+  fprintf(f, "bbr-shard 1\nkey %s\nobj %" PRIu64 "\ntimes %a %a %a\ncounters", key.c_str(), s.objBytes, s.liftLower, s.opt, s.codegen);
+  for (size_t i = 0; i < n; ++i) fprintf(f, " %" PRIu64, *c[i]);
+  fprintf(f, "\nunits %zu", s.unitVaddrs.size()); for (uint64_t v : s.unitVaddrs) fprintf(f, " %" PRIx64, v);
+  fprintf(f, "\ntraps %zu", s.trapVaddrs.size()); for (uint64_t v : s.trapVaddrs) fprintf(f, " %" PRIx64, v);
+  fprintf(f, "\nhooks %zu", s.hookSeen.size()); for (uint32_t v : s.hookSeen) fprintf(f, " %x", v);
+  fprintf(f, "\nops %zu\n", s.opUnits.size()); for (auto& [name, cnt] : s.opUnits) fprintf(f, "%" PRIu64 " %s\n", cnt, name.c_str());
+  fprintf(f, "end\n");
+  const bool ok = fclose(f) == 0;
+  std::remove(path.c_str());
+  return ok && std::rename(tmp.c_str(), path.c_str()) == 0;
+}
+
+// The shard of the object <obj>, when its .stat file has `key` and the object is as long as it was.
+bool loadShard(const std::string& obj, const std::string& key, ShardStats& s) {
+  FILE* f = fopen((obj + ".stat").c_str(), "r");
+  if (!f) return false;
+  bool ok = true;
+  char line[256], k[64] = {};
+  uint64_t objSize = 0;
+  size_t n; uint64_t* const* c = shardCounters(s, n);
+  ok = fscanf(f, "bbr-shard 1\nkey %63s\nobj %" SCNu64 "\ntimes %la %la %la\ncounters", k, &objSize, &s.liftLower, &s.opt, &s.codegen) == 5 && key == k;
+  for (size_t i = 0; ok && i < n; ++i) ok = fscanf(f, " %" SCNu64, c[i]) == 1;
+  auto list = [&](const char* tag, std::vector<uint64_t>& out) {
+    size_t cnt = 0;
+    if (!ok || fscanf(f, " %15s %zu", line, &cnt) != 2 || strcmp(line, tag) || cnt > (1u << 28)) { ok = false; return; }
+    out.resize(cnt);
+    for (size_t i = 0; i < cnt && ok; ++i) ok = fscanf(f, " %" SCNx64, &out[i]) == 1;
+  };
+  list("units", s.unitVaddrs); list("traps", s.trapVaddrs);
+  { std::vector<uint64_t> h; list("hooks", h); for (uint64_t v : h) s.hookSeen.push_back((uint32_t)v); }
+  size_t nops = 0;
+  if (ok) ok = fscanf(f, " %15s %zu", line, &nops) == 2 && !strcmp(line, "ops");
+  for (size_t i = 0; ok && i < nops; ++i) { uint64_t cnt; char name[200]; ok = fscanf(f, " %" SCNu64 " %199s", &cnt, name) == 2; if (ok) s.opUnits[name] = cnt; }
+  if (ok) ok = fscanf(f, " %15s", line) == 1 && !strcmp(line, "end");
+  fclose(f);
+  if (!ok) return false;
+  FILE* o = fopen(obj.c_str(), "rb");
+  if (!o) return false;
+  fseek(o, 0, SEEK_END); const long len = ftell(o); fclose(o);
+  return len >= 0 && (uint64_t)len == objSize;
+}
+
 // --dump-units and --check-entries: the unit table as the compile will build it, and whether given addresses are entries (a unit starts there, or a
 // granular function holds the instruction boundary in one of its units). No code is generated; the granular functions are lifted once more.
 struct EntrySink : UnitSink {
@@ -352,7 +422,7 @@ int reportUnits(const ElfImage& img, const std::vector<Func>& funcs, const LiftO
   auto isUnit = [&](uint64_t a) { auto it = std::lower_bound(pre.begin(), pre.end(), a, [](const UnitInfo& u, uint64_t v) { return u.entry < v; }); return it != pre.end() && it->entry == a; };
   if (!opt.unitsDump.empty()) {
     FILE* f = fopen(opt.unitsDump.c_str(), "w");
-    if (!f) { perror(opt.unitsDump.c_str()); return 1; }
+    if (!f) { bbrError("%s: %s", opt.unitsDump.c_str(), strerror(errno)); return 1; }
     fprintf(f, "# bb-recomp unit table: unit <entry> <end> <extra: 0 function start, 1 other entry> <function start> <granular: 0|1>  (image offsets, hex)\n");
     size_t fi = 0;
     for (const UnitInfo& u : pre) {
@@ -412,7 +482,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
   std::set<uint64_t> forceOp;
   if (!opt.variantPaths.empty()) {
     std::string err;
-    if (!loadCatalogs(opt.variantPaths, catalog, err)) { fprintf(stderr, "bb-recomp: %s\n", err.c_str()); return 1; }
+    if (!loadCatalogs(opt.variantPaths, catalog, err)) { bbrError("%s", err.c_str()); return 1; }
     uint32_t idx = 0;
     for (auto& h : catalog.hooks) {
       HookSite hs; hs.vaddr = h.vaddr; hs.index = idx++; hs.resume = h.resume;
@@ -467,15 +537,18 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     std::vector<std::vector<uint64_t>> weak(part.size());
     std::vector<std::vector<WeakRec>> weakRecs(part.size());
     std::atomic<size_t> nextF {0};
+    std::atomic<uint64_t> liftedBytes {0};
+    bbrWork("lift", 0, totalBytes);
     auto w = [&](unsigned id) {
       Lifter lifter(img, liftOpt);
       RecordSink rs(part[id]);
       for (;;) {
         const size_t j = nextF++;
-        if (j >= todo.size()) break;
+        if (j >= todo.size() || bbrStopRequested()) break;
         const Func& f = funcs[todo[j]];
         FuncResult fr;
         lifter.lift(f, fr, nullptr, nullptr, nullptr, &rs);
+        bbrWork("lift", liftedBytes += f.end - f.start, totalBytes);
         if (!fr.weakJumps.empty()) { weak[id].push_back(f.start); for (auto& j : fr.weakJumps) weakRecs[id].push_back({f.start, j}); }
         if (fr.status == LiftStatus::Failed || fr.status == LiftStatus::Crashed) part[id].push_back({f.start, f.end, false});
       }
@@ -483,6 +556,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     std::vector<std::thread> th;
     for (unsigned i = 0; i < part.size(); ++i) th.emplace_back(w, i);
     for (auto& t : th) t.join();
+    if (bbrStopRequested()) return 128 + g_bbrStopSignal.load();
     for (auto& p : part) pre.insert(pre.end(), p.begin(), p.end());
     std::sort(pre.begin(), pre.end(), [](const UnitInfo& a, const UnitInfo& b) { return a.entry < b.entry || (a.entry == b.entry && a.end > b.end); });
     pre.erase(std::unique(pre.begin(), pre.end(), [](const UnitInfo& a, const UnitInfo& b) { return a.entry == b.entry; }), pre.end());
@@ -547,6 +621,30 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
   bbrStage("compile", "Recompiling");
   std::vector<ShardStats> stats(nshards);
   std::vector<std::string> objFiles(nshards);
+  std::vector<uint64_t> shardBytes(nshards, 0);
+  for (unsigned k = 0; k < nshards; ++k) for (size_t j = bound[k]; j < bound[k + 1]; ++j) shardBytes[k] += funcs[todo[j]].end - funcs[todo[j]].start;
+  const uint64_t imageHash = fnv1a(img.file);
+  // Resume: what a shard's code depends on besides its own function range (see saveShard).
+  KeyHash globalKey;
+  if (opt.resume && wantCode) {
+    KeyHash& h = globalKey;
+    h.str(BBR_TOOL_VERSION); h.u64(img.base); h.u64(imageHash); h.u64(img.file.size());
+    h.u64(opt.target.aarch64); h.u64(opt.target.opt); h.str(opt.target.cpu); h.str(opt.target.features);
+    h.u64(opt.storeFlagsAtCalls | opt.calleeSaved << 1 | opt.dirtyCheck << 2 | opt.resumeEntries << 3); h.u64((uint64_t)opt.granular);
+    h.u64(liftOpt.multiblock | liftOpt.tso << 1 | liftOpt.gapUnits << 2 | liftOpt.switchTables << 3 | liftOpt.passes << 4 | liftOpt.validate << 5 | liftOpt.granularAll << 6); h.str(liftOpt.host); h.u64(liftOpt.maxInst);
+    h.u64(starts.size()); for (uint64_t v : starts) h.u64(v);
+    h.u64(granular.size()); for (uint64_t v : granular) h.u64(v);
+    h.u64(funcs.size()); for (const Func& f : funcs) { h.u64(f.start); h.u64(f.end); h.u64(f.kind); }
+    h.u64(catalog.hooks.size());
+    for (const HookDecl& d : catalog.hooks) { h.u64(d.vaddr); h.u64(d.len); h.u64(d.skip | d.regs << 1); h.u64(d.resume.size()); for (uint64_t r : d.resume) h.u64(r); }
+    h.u64(nshards); h.u64(todo.size());
+  }
+  // Progress (--progress): work units are code bytes, a shard's lift+lower share is kLiftShare percent of its work (measured: 54 of 1638 CPU seconds), the rest is optimiser + code generator.
+  constexpr uint64_t kLiftShare = 3;
+  const uint64_t workTotal = totalBytes * 100;
+  std::atomic<uint64_t> workDone {0};
+  std::atomic<unsigned> reused {0};
+  bbrWork("compile", 0, workTotal);
   std::atomic<unsigned> next {0};
   std::atomic<bool> failed {false};
   const unsigned jobs = std::max(1u, std::min(plan.jobs, nshards));
@@ -558,16 +656,29 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     if (!tm) { failed = true; return; }
     for (;;) {
       const unsigned k = next++;
-      if (k >= nshards) break;
+      if (k >= nshards || bbrStopRequested()) break;
       bbrProgress(k, nshards);
       ShardStats& st = stats[k];
+      const std::string path = wantCode ? shardPath(opt.objPath.empty() ? opt.soPath + ".o" : opt.objPath, nshards, k, ".o") : std::string();
+      std::string key;
+      if (opt.resume && wantCode) {
+        KeyHash h = globalKey;
+        h.u64(k); h.u64(bound[k]); h.u64(bound[k + 1]);
+        for (size_t j = bound[k]; j < bound[k + 1]; ++j) h.u64(todo[j]);
+        key = h.hex();
+        if (loadShard(path, key, st)) { objFiles[k] = path; ++reused; workDone += shardBytes[k] * 100; bbrWork("compile", workDone, workTotal); continue; }
+        st = ShardStats();
+        std::remove((path + ".stat").c_str()); // (a crash must not leave an old .stat next to a new object)
+      }
       LLVMContext ctx;
       auto mod = std::make_unique<Module>("bbr_shard_" + std::to_string(k), ctx);
       setModuleTarget(*mod, *tm);
       UnitLowerer ul(ctx, *mod, lo);
       Sink sink(ul, st);
       auto t = clk::now();
+      bool aborted = false;
       for (size_t j = bound[k]; j < bound[k + 1]; ++j) {
+        if (bbrStopRequested()) { aborted = true; break; }
         const Func& f = funcs[todo[j]];
         FuncResult fr;
         lifter.lift(f, fr, nullptr, nullptr, nullptr, &sink);
@@ -577,16 +688,19 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
           ++st.liftFailed; ++st.units; st.unitVaddrs.push_back(f.start);
           ul.stub(f.start);
         }
+        workDone += (f.end - f.start) * kLiftShare;
+        bbrWork("compile", workDone, workTotal);
       }
+      if (aborted) break;
       st.liftLower = since(t);
       if (opt.verify) {
         std::string e; raw_string_ostream os(e);
-        if (verifyModule(*mod, &os)) { std::lock_guard<std::mutex> g(errMu); fprintf(stderr, "bb-recomp: shard %u: LLVM verifier: %s\n", k, e.substr(0, 2000).c_str()); failed = true; }
+        if (verifyModule(*mod, &os)) { std::lock_guard<std::mutex> g(errMu); bbrError("shard %u: LLVM verifier: %s", k, e.substr(0, 2000).c_str()); failed = true; }
       }
       if (emitLl) {
         std::error_code ec;
         raw_fd_ostream os(shardPath(opt.llPath, nshards, k, ".ll"), ec);
-        if (ec) { fprintf(stderr, "bb-recomp: %s\n", ec.message().c_str()); failed = true; continue; }
+        if (ec) { bbrError("%s", ec.message().c_str()); failed = true; continue; }
         mod->print(os, nullptr);
       }
       if (wantCode) {
@@ -599,19 +713,27 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
         st.codegen = since(t);
         st.objBytes = obj.size();
         st.textBytes = textSize(obj);
-        const std::string path = shardPath(opt.objPath.empty() ? opt.soPath + ".o" : opt.objPath, nshards, k, ".o");
-        FILE* f = fopen(path.c_str(), "wb");
-        if (!f) { perror(path.c_str()); failed = true; continue; }
-        fwrite(obj.data(), 1, obj.size(), f);
-        fclose(f);
+        // written under a temporary name and renamed: a finished object is never a half-written one (--resume trusts it)
+        const std::string tmp = path + ".tmp";
+        FILE* f = fopen(tmp.c_str(), "wb");
+        if (!f) { bbrError("%s: %s", tmp.c_str(), strerror(errno)); failed = true; continue; }
+        const bool wrote = fwrite(obj.data(), 1, obj.size(), f) == obj.size();
+        if (fclose(f) != 0 || !wrote) { bbrError("cannot write %s", tmp.c_str()); failed = true; continue; }
+        std::remove(path.c_str());
+        if (std::rename(tmp.c_str(), path.c_str()) != 0) { bbrError("cannot rename %s to %s: %s", tmp.c_str(), path.c_str(), strerror(errno)); failed = true; continue; }
         objFiles[k] = path;
+        if (opt.resume) saveShard(path, key, st);
       }
+      workDone += shardBytes[k] * (100 - kLiftShare);
+      bbrWork("compile", workDone, workTotal);
     }
   };
   std::vector<std::thread> th;
   for (unsigned i = 0; i < jobs; ++i) th.emplace_back(worker);
   for (auto& t : th) t.join();
+  if (bbrStopRequested()) return 128 + g_bbrStopSignal.load();
   if (failed) return 1;
+  if (wantCode) for (unsigned k = 0; k < nshards; ++k) { opt.workFiles.push_back(objFiles[k]); if (opt.resume) opt.workFiles.push_back(objFiles[k] + ".stat"); }
 
   // Totals.
   ShardStats tot;
@@ -654,7 +776,10 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     std::sort(trapSorted.begin(), trapSorted.end());
     vj.trapUnits = &trapSorted;
     for (auto& s2 : stats) for (uint32_t i : s2.hookSeen) (void)i;
-    if (!compileVariants(vj, vres)) { fprintf(stderr, "bb-recomp: compiling the variants failed\n"); return 1; }
+    const bool variantsOk = compileVariants(vj, vres);
+    if (bbrStopRequested()) return 128 + g_bbrStopSignal.load();
+    if (!variantsOk) { bbrError("compiling the variants failed"); return 1; }
+    for (const std::string& f : vres.objFiles) opt.workFiles.push_back(f);
     for (auto& s2 : vres.notes) fprintf(stderr, "bb-recomp: variants: %s\n", s2.c_str());
     haveVariantCode = !vres.table.funcs.empty();
     for (uint32_t i = 0; i < vres.table.units.size(); ++i) (void)i;
@@ -664,6 +789,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
 
   double tableTime = 0, helperTime = 0;
   std::string tablePath;
+  if (wantCode) bbrWork("link", 0, 3); // the unit table, the x87 helpers, the link
   if (wantCode && opt.table) {
     auto t = clk::now();
     auto tm = makeTargetMachine(opt.target);
@@ -672,7 +798,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     tablePath = (dot == std::string::npos ? tablePath : tablePath.substr(0, dot)) + ".table.o";
     uint64_t textEnd = 0;
     for (auto& sg : img.loads) if (sg.flags & 1) textEnd = std::max(textEnd, sg.vaddr + sg.memsz);
-    if (units != starts) { fprintf(stderr, "bb-recomp: the units of the second pass (%zu) differ from the pre-pass (%zu)\n", units.size(), starts.size()); return 1; }
+    if (units != starts) { bbrError("the units of the second pass (%zu) differ from the pre-pass (%zu)", units.size(), starts.size()); return 1; }
     std::vector<uint64_t> ends(pre.size());
     std::vector<uint8_t> extraFlags(pre.size());
     for (size_t i = 0; i < pre.size(); ++i) { ends[i] = pre[i].end > pre[i].entry ? pre[i].end : (i + 1 < pre.size() ? pre[i + 1].entry : textEnd); extraFlags[i] = pre[i].extra; }
@@ -689,9 +815,11 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     HookTable ht; ht.sites = &hookSites; ht.decls = &catalog.hooks; ht.compiled = hookCompiled;
     std::vector<uint8_t> granularFlags(compiled.size(), 0);
     for (size_t i = 0; i < compiled.size(); ++i) granularFlags[i] = granularAll || granular.count(compiled[i].start) ? 1 : 0;
-    if (!emitTable(ehHdrs, units, ends, unitHashes(img, units, nexts), unitHashes(img, units, ends), extraFlags, textEnd, dirtyInit, compiled, granularFlags, fnv1a(img.file), opt, *tm, tablePath,
+    if (!emitTable(ehHdrs, units, ends, unitHashes(img, units, nexts), unitHashes(img, units, ends), extraFlags, textEnd, dirtyInit, compiled, granularFlags, imageHash, opt, *tm, tablePath,
                    haveVariantCode ? &vres.table : nullptr, catalog.hooks.empty() ? nullptr : &ht)) return 1;
     tableTime = since(t);
+    opt.workFiles.push_back(tablePath);
+    bbrWork("link", 1, 3);
   }
 
   // The x87 helpers (helpers, docs/RECOMP_ABI.md): plain C, compiled for the target with its own clang and
@@ -710,8 +838,10 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
       cmd = "nice -n 19 clang";
     }
     cmd += " -O2 -fPIC -fvisibility=hidden -fno-stack-protector -ffp-contract=off -c " + dir + "/bbr_x87_all.c -o " + helperObj;
-    if (bbrSystem(opt.bundleDir, cmd) != 0) { fprintf(stderr, "bb-recomp: compiling the x87 helpers failed: %s\n", cmd.c_str()); return 1; }
+    if (bbrSystem(opt.bundleDir, cmd) != 0) { bbrError("compiling the x87 helpers failed: %s", cmd.c_str()); return 1; }
     helperTime = since(t);
+    opt.workFiles.push_back(helperObj);
+    bbrWork("link", 2, 3);
   }
 
   bbrStage("link", "Linking");
@@ -735,8 +865,9 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
       // executable's DT_NEEDED libraries as glibc does (dlopen failed: cannot locate symbol "bbr_dispatch"). A soname stub
       // made here gives the entry; at run time it is the libbbcpu.so already loaded.
       const std::string stub = opt.soPath + ".libbbcpu-stub.so";
+      opt.workFiles.push_back(stub);
       const std::string mk = "nice -n 19 " + bin + "/bin/clang --target=aarch64-linux-android30 -shared -nostdlib -Wl,-soname,libbbcpu.so -x c /dev/null -o " + stub;
-      if (bbrSystem(opt.bundleDir, mk) != 0) { fprintf(stderr, "bb-recomp: cannot make %s\n", stub.c_str()); return 1; }
+      if (bbrSystem(opt.bundleDir, mk) != 0) { bbrError("cannot make %s", stub.c_str()); return 1; }
       cmd += " --no-as-needed " + stub;
     } else {
       // The PC runtime (BB_AOT with an x86-64 host): the system clang links it with ld.lld and adds the builtins
@@ -749,9 +880,10 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     }
     const int rc = bbrSystem(opt.bundleDir, cmd);
     linkTime = since(t);
-    if (rc != 0) { fprintf(stderr, "bb-recomp: link failed (%d): %s\n", rc, cmd.c_str()); return 1; }
+    if (rc != 0) { bbrError("link failed (%d): %s", rc, cmd.c_str()); return 1; }
     FILE* f = fopen(opt.soPath.c_str(), "rb");
     if (f) { fseek(f, 0, SEEK_END); soBytes = ftell(f); fclose(f); }
+    bbrWork("link", 3, 3);
   }
 
   const double wall = since(t0);
@@ -763,6 +895,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
   if (plan.availGB > 0)
     say("memory plan: %.1f GB available, budget %.1f GB (%.0f%%): %u jobs, %u shards of %.2f MB, estimated peak %.1f GB%s\n", plan.availGB, plan.budgetGB, opt.memFraction * 100, jobs, nshards,
         plan.shardMB, plan.estPeakGB, plan.limited ? " (reduced to fit)" : "");
+  if (opt.resume && wantCode) say("resume: %u of %u shards reused from an earlier run\n", reused.load(), nshards);
   say("functions %" PRIu64 " (%.1f MB), units %" PRIu64 " (lift failures %" PRIu64 "), IR ops lowered %" PRIu64 "\n", tot.funcs, totalBytes / 1e6, tot.units, tot.liftFailed, tot.irOps);
   say("units with bbr_trap (unsupported ops): %" PRIu64 " (%.2f%%), trap sites %" PRIu64 "\n", tot.unitsWithTrap, tot.units ? 100.0 * tot.unitsWithTrap / tot.units : 0.0, tot.trapSites);
   say("indirect jmps %" PRIu64 ": %" PRIu64 " jump tables (%" PRIu64 " bounded + %" PRIu64 " scanned, %.2f MB of tables), %" PRIu64 " jmp [mem], %" PRIu64 " jmp reg tail calls, %" PRIu64 " table-like unresolved; %" PRIu64 " lowered as switch (%" PRIu64 " cases)\n",

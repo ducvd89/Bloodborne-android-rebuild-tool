@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Measurement build of bb-recomp (command line only, in-process LLD: BB_RECOMP_BUNDLED), to time the recompile on an Android phone.
+# Command line build of bb-recomp (no window; in-process LLD: BB_RECOMP_BUNDLED) that runs on an Android phone (arm64/package-android.sh makes out/android/ from it).
 #   arm64/build.sh aarch64   fully static AArch64 glibc executable (run under `adb shell`), out/arm64/bb-recomp
 #   arm64/build.sh x86_64    the same sources as a static x86-64 executable, for the PC baseline, out/x86-bundled/bb-recomp
-# Not a release: no window (no SDL/ImGui), no AppImage. Runs at nice 19 with at most BB_JOBS (default 12) jobs.
+# The aarch64 build has no X86 code generator (BB_RECOMP_NO_X86: only --target aarch64 works); the x86_64 one keeps both. No window (no SDL/ImGui), no AppImage. Runs at nice 19 with at most BB_JOBS (default 12) jobs.
 # Needs the x86-64 LLVM 23.1.3 tarball, its sysroot (jammy), zlib/zstd and the prepared FEX tree of a normal checkout (fetch-deps.sh, fetch-fex.sh):
 # BB_X86_DEPS (default ../Bloodborne-android-rebuild-tool/.local-deps) and BB_FEX_TREE (default ../Bloodborne-android-rebuild-tool/out/recomp-fex)
 # are only read. Everything for AArch64 (LLVM 23.1.3 Linux-ARM64 tarball, arm64 sysroot, zlib, zstd) goes into .local-deps here.
@@ -69,13 +69,13 @@ elif [[ $mode == aarch64 ]]; then
         "$x86llvm/bin/llvm-ar" d "$early/libc-early.a" dso_handle.o dl-reloc-static-pie.o   # crtbeginT.o and crt1.o define these
         cp "$sysroot/usr/lib/aarch64-linux-gnu/libm.a" "$early/libm-early.a"
     fi
-    earlyarg=(-DBB_RECOMP_EARLY_LIBS_DIR="$early")
+    earlyarg=(-DBB_RECOMP_EARLY_LIBS_DIR="$early" -DBB_RECOMP_NO_X86=ON)   # no X86 code generator: the phone only needs --target aarch64
 else
     echo "usage: $0 aarch64|x86_64" >&2; exit 2
 fi
 
 mkdir -p out
-run cmake -S . -B "$out" -G Ninja -DFEX_SOURCE_DIR="$fex" -DBB_RECOMP_BUNDLED=ON -DBB_RECOMP_VERSION="${BB_RECOMP_VERSION:-1.1.0}" \
+run cmake -S . -B "$out" -G Ninja -DFEX_SOURCE_DIR="$fex" -DBB_RECOMP_BUNDLED=ON -DBB_RECOMP_VERSION="${BB_RECOMP_VERSION:-1.2.0}" \
     "${toolchain[@]}" "${earlyarg[@]}" -DBB_RECOMP_LLVM_DIR="$llvm/lib/cmake/llvm" -DBB_RECOMP_DEPS_PREFIX="$prefix" -DBB_RECOMP_MARCH="$march" \
     -DBB_RECOMP_JOBS="$J" > "$out.cfg.log" 2>&1 || { tail -30 "$out.cfg.log"; exit 1; }
 run cmake --build "$out" -j "$J"

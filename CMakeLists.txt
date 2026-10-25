@@ -31,7 +31,8 @@ option(BB_RECOMP_PLAYER "Player mode: bb-prepare's sources and src/player.cpp in
 option(BB_RECOMP_BUNDLED "Self-contained bb-recomp: static LLVM + LLD, no NDK or system clang at run time (package.sh)" OFF)
 set(BB_RECOMP_LLVM_DIR "" CACHE PATH "LLVM's lib/cmake/llvm (default: the system LLVM)")
 set(BB_RECOMP_DEPS_PREFIX "" CACHE PATH "prefix with static zlib and zstd (BB_RECOMP_BUNDLED)")
-set(BB_RECOMP_VERSION "1.1.0" CACHE STRING "tool version written to libbbaot.json")
+option(BB_RECOMP_NO_X86 "Bundled build without the X86 code generator (only --target aarch64): the phone binary (arm64/build.sh)" OFF)
+set(BB_RECOMP_VERSION "1.2.0" CACHE STRING "tool version written to libbbaot.json")
 # Windows (experimental, cross-compiled on Linux with llvm-mingw): -DBB_RECOMP_TOOLCHAIN_FILE=windows/toolchain-mingw-x86_64.cmake
 # -DBB_MINGW_ROOT=<llvm-mingw dir>; LLVM_DIR and the deps prefix then name builds for mingw (windows/build.sh).
 set(BB_RECOMP_TOOLCHAIN_FILE "" CACHE FILEPATH "CMake toolchain file for a cross build (Windows: windows/toolchain-mingw-x86_64.cmake)")
@@ -104,7 +105,7 @@ ExternalProject_Add(fex
     -DTUNE_CPU=none -DTUNE_ARCH=${BB_RECOMP_MARCH} -DOVERRIDE_VERSION=FEX-2609.1 -DOVERRIDE_HASH=9fbdc00bd6401aff3b32d79e78ff98b8a13e4dcf
     -DCMAKE_PROJECT_FEX_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/fex_project.cmake
     -DBB_RECOMP_DIR=${CMAKE_CURRENT_LIST_DIR}
-    -DBB_RECOMP_PLAYER=${BB_RECOMP_PLAYER} -DBB_RECOMP_BUNDLED=${BB_RECOMP_BUNDLED} -DBB_RECOMP_VERSION=${BB_RECOMP_VERSION}
+    -DBB_RECOMP_NO_X86=${BB_RECOMP_NO_X86} -DBB_RECOMP_PLAYER=${BB_RECOMP_PLAYER} -DBB_RECOMP_BUNDLED=${BB_RECOMP_BUNDLED} -DBB_RECOMP_VERSION=${BB_RECOMP_VERSION}
     "-DBB_RECOMP_LLVM_DIR=${BB_RECOMP_LLVM_DIR}" "-DBB_RECOMP_DEPS_PREFIX=${BB_RECOMP_DEPS_PREFIX}" "-DBB_RECOMP_LLD_INCLUDE=${BB_RECOMP_LLD_INCLUDE}" "-DBB_RECOMP_EARLY_LIBS_DIR=${BB_RECOMP_EARLY_LIBS_DIR}" "-DBB_RECOMP_SDL_PREFIX=${BB_RECOMP_SDL_PREFIX}" "-DBB_RECOMP_IMGUI_DIR=${BB_RECOMP_IMGUI_DIR}" "-DBB_RECOMP_MIMALLOC_DIR=${BB_RECOMP_MIMALLOC_DIR}"
     -DBB_RECOMP_SANITIZE=${BB_RECOMP_SANITIZE} -DBB_RECOMP_LLVM=${BB_RECOMP_LLVM} -DBB_RECOMP_MARCH=${BB_RECOMP_MARCH} -DBB_RECOMP_NASM=${BB_RECOMP_NASM}
   BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target ${BB_TARGETS} --parallel ${BB_RECOMP_JOBS}

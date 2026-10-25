@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "discover.h"
+#include "progress.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -101,7 +102,8 @@ DiscoverResult discoverEntries(const ElfImage& img, std::vector<Func>& funcs, st
       Lifter l(img, lo);
       for (;;) {
         const size_t k = next++;
-        if (k >= frontier.size()) break;
+        if (k >= frontier.size() || bbrStopRequested()) break;
+        if (round == 0 && (k & 127) == 0) bbrWork("discover", k, frontier.size());
         FuncResult r;
         l.lift(frontier[k], r, nullptr, nullptr, nullptr, nullptr);
         if (r.status == LiftStatus::Failed || r.status == LiftStatus::Crashed) okay[k] = 0;
@@ -111,6 +113,8 @@ DiscoverResult discoverEntries(const ElfImage& img, std::vector<Func>& funcs, st
     std::vector<std::thread> th;
     for (unsigned j = 0; j < std::max(1u, jobs); ++j) th.emplace_back(worker);
     for (auto& t : th) t.join();
+    if (bbrStopRequested()) break;
+    if (round == 0) bbrWork("discover", frontier.size(), frontier.size());
 
     // Pseudo-functions that did not decode were data: drop them again.
     if (round > 0) {

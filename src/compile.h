@@ -43,6 +43,8 @@ struct CompileOptions {
   bool unitsOnly = false;         // --units-only: stop after the unit set is known (dump, check), no code
   std::vector<std::string> variantPaths; // variant catalogs (files or directories of *.txt): patch variants and native hook sites (docs/RECOMP_ABI.md)
   bool variantReport = false;     // list every variant and hook site in the summary
+  bool resume = false;            // --resume: write a .stat file next to every shard object and reuse the shards a restart finds finished for the same inputs
+  mutable std::vector<std::string> workFiles; // out: the files this compile made next to the .so (objects, .stat files, the stub and helper objects): --clean-work deletes them
 };
 
 int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const CompileOptions& opt);

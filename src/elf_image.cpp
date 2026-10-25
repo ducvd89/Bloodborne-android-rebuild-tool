@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "elf_image.h"
+#include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -42,12 +45,29 @@ bool readFile(const std::string& path, std::vector<uint8_t>& out) {
 }
 
 void* mapFixed(uint64_t addr, uint64_t size) {
+  // test hook: BBR_TEST_MAP_BUSY=<hex,hex,...> makes the mapping at these addresses fail (the fallback of the lift base)
+  if (const char* e = getenv("BBR_TEST_MAP_BUSY")) {
+    for (const char* p = e; *p;) { char* q = nullptr; const uint64_t a = strtoull(p, &q, 16); if (q == p) break; if (a == addr) { errno = EEXIST; return nullptr; } p = *q ? q + 1 : q; }
+  }
 #ifdef _WIN32
   return VirtualAlloc((void*)addr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
   void* p = mmap((void*)addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-  return p == MAP_FAILED ? nullptr : p;
+  if (p == MAP_FAILED) return nullptr;
+  if (p != (void*)addr) { munmap(p, size); errno = EEXIST; return nullptr; } // a kernel without MAP_FIXED_NOREPLACE took the address as a hint
+  return p;
 #endif
+}
+
+std::string mapError(uint64_t addr, uint64_t size) {
+  char b[512];
+#ifdef _WIN32
+  snprintf(b, sizeof b, "cannot map the image (%.0f MB) at the lift base %#llx: the address range is in use (try --base <hex>, a multiple of 4 GB)", size / 1048576.0, (unsigned long long)addr);
+#else
+  snprintf(b, sizeof b, "cannot map the image (%.0f MB) at the lift base %#llx: %s. The address range is in use or outside this system's address space "
+           "(some Android kernels end user space at 0x8000000000); --base <hex> picks another place (a multiple of 4 GB, below 0x8000000000)", size / 1048576.0, (unsigned long long)addr, strerror(errno));
+#endif
+  return b;
 }
 } // namespace
 
@@ -79,7 +99,7 @@ bool ElfImage::load(const std::string& path, uint64_t baseAddr, std::string& err
     if (!mapFixed(a, e - a)) {
       // Segments may share a page boundary only if they overlap; PS4 segments are page aligned, so a
       // failure here means the base is already in use.
-      err = "cannot map segment at " + std::to_string(a); return false;
+      err = mapError(a, e - a); mapFailed = true; return false;
     }
     memcpy((void*)(baseAddr + s.vaddr), file.data() + s.offset, s.filesz);
   }
@@ -168,7 +188,7 @@ bool ElfImage::loadBoot(const std::string& bootPath, const std::string& ebootElf
   textLo = 0; textHi = 0;
   for (auto& s : loads) if (s.flags & 1) { if (!textHi) textLo = s.vaddr; textHi = std::max(textHi, s.vaddr + s.memsz); }
   uint64_t a = baseAddr & ~(Page - 1), e = (baseAddr + size + Page - 1) & ~(Page - 1);
-  if (!mapFixed(a, e - a)) { err = "cannot map the image at " + std::to_string(a); return false; }
+  if (!mapFixed(a, e - a)) { err = mapError(a, e - a); mapFailed = true; return false; }
   memcpy((void*)baseAddr, file.data(), file.size());
   return true;
 }
