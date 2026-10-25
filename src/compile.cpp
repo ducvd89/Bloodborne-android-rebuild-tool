@@ -431,7 +431,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
       if ((uint64_t)opt.onlyVaddr >= funcs[i].start && (uint64_t)opt.onlyVaddr < funcs[i].end) { todo.push_back(i); break; }
     if (todo.empty()) { fprintf(stderr, "bb-recomp: no function covers %#" PRIx64 "\n", (uint64_t)opt.onlyVaddr); return 1; }
   } else {
-    for (size_t i = 0; i < funcs.size() && (!opt.limit || todo.size() < opt.limit); ++i) todo.push_back(i);
+    for (size_t i = 0; i < funcs.size() && (!opt.limit || todo.size() < opt.limit); i += std::max<uint64_t>(1, opt.every)) todo.push_back(i);
   }
   uint64_t totalBytes = 0;
   for (size_t i : todo) totalBytes += funcs[i].end - funcs[i].start;

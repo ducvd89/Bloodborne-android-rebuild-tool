@@ -7,11 +7,19 @@ build machine's own.   ./fetch-sysroot.py [dest]
 """
 import gzip, io, os, re, subprocess, sys, tarfile, urllib.request
 
-DEST = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '.local-deps/sysroot-jammy'))
-MIRROR = 'https://archive.ubuntu.com/ubuntu'
+# `./fetch-sysroot.py <dest> --arch arm64`: the AArch64 sysroot (ports.ubuntu.com) for the static aarch64 measurement build (arm64/build.sh):
+# only the C library, libstdc++ and libgcc development packages (no X11 or GL).
+ARCH = 'amd64'
+args = sys.argv[1:]
+if '--arch' in args:
+    i = args.index('--arch'); ARCH = args[i + 1]; del args[i:i + 2]
+DEST = os.path.abspath(args[0] if args else os.path.join(os.path.dirname(__file__), '.local-deps/sysroot-jammy'))
+MIRROR = 'https://archive.ubuntu.com/ubuntu' if ARCH == 'amd64' else 'https://ports.ubuntu.com/ubuntu-ports'
 SUITES = ['jammy-security', 'jammy-updates', 'jammy']
 WANT = ['libc6-dev', 'libstdc++-12-dev', 'libgcc-12-dev', 'linux-libc-dev', 'libx11-dev', 'libxext-dev', 'libxcursor-dev', 'libxi-dev', 'libxfixes-dev',
         'libxrandr-dev', 'libxss-dev', 'libxtst-dev', 'libxkbcommon-dev', 'libwayland-dev', 'libdbus-1-dev', 'libxrender-dev', 'x11proto-dev', 'libgl-dev', 'libegl-dev', 'libgles-dev', 'libglx-dev', 'libopengl-dev', 'libfribidi-dev', 'libdecor-0-dev']
+if ARCH != 'amd64':
+    WANT = ['libc6-dev', 'libstdc++-12-dev', 'libgcc-12-dev', 'linux-libc-dev']
 SKIP = {'debconf', 'dpkg', 'perl-base', 'libc-dev-bin', 'libc-bin', 'gcc-12', 'cpp-12'}
 
 def fetch(url):
@@ -20,7 +28,7 @@ def fetch(url):
 pk = {}
 for suite in SUITES:
     for comp in ('main', 'universe'):
-        data = gzip.decompress(fetch(f'{MIRROR}/dists/{suite}/{comp}/binary-amd64/Packages.gz')).decode()
+        data = gzip.decompress(fetch(f'{MIRROR}/dists/{suite}/{comp}/binary-{ARCH}/Packages.gz')).decode()
         for block in data.split('\n\n'):
             f = dict(re.findall(r'^([A-Za-z-]+): (.*)$', block, re.M))
             if 'Package' in f and f['Package'] not in pk: pk[f['Package']] = f
