@@ -19,6 +19,7 @@ mode=${1:-aarch64}
 J=${BB_JOBS:-12}
 earlyarg=()
 LLVM_VER=${BB_LLVM_VERSION:-23.1.3}
+LLVM_REV=${BB_LLVM_REVISION:-0d261d1ca552c95a8f007e061c787ac7132fbcbc}   # llvmorg-$LLVM_VER, as the official tarballs' LLD names it
 x86deps=${BB_X86_DEPS:-$root/../Bloodborne-android-rebuild-tool/.local-deps}
 fextree=${BB_FEX_TREE:-$root/../Bloodborne-android-rebuild-tool/out/recomp-fex}
 deps=$root/.local-deps
@@ -108,21 +109,28 @@ elif [[ $mode == android ]]; then
         cmake --install "$x86deps/deps/b-zstd-android" >/dev/null
     fi
     # LLVM + LLD for the phone: the AArch64 target only (BB_RECOMP_NO_X86), no tools, the libraries bb-recomp links (the list of package-windows.sh without X86).
-    # The release build of the official tarballs (no assertions), so the code it generates is the same as the PC tool's.
-    if [[ ! -f $lb/lib/liblldELF.a ]]; then
+    # The release build of the official tarballs (no assertions), so the code it generates is the same as the PC tool's. LLVM_FORCE_VC_*: the revision the
+    # official tarball names; without them LLD names the git checkout around the sources (this repository), and every libbbaot.so's .comment ("Linker: LLD ...")
+    # would differ from a PC build's. A change of these settings reconfigures (the .bb-config stamp).
+    llvmvc=(-DLLVM_FORCE_VC_REPOSITORY=https://github.com/llvm/llvm-project -DLLVM_FORCE_VC_REVISION=$LLVM_REV)
+    if [[ ! -f $lb/lib/liblldELF.a || $(cat "$lb/.bb-config" 2>/dev/null) != "${llvmvc[*]}" ]]; then
         run cmake -S "$src/llvm" -B "$lb" -G Ninja "${tc[@]}" -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=lld -DLLVM_TARGETS_TO_BUILD=AArch64 \
             -DLLVM_NATIVE_TOOL_DIR="$x86llvm/bin" -DLLVM_HOST_TRIPLE=aarch64-unknown-linux-android$api -DLLVM_ENABLE_ZLIB=FORCE_ON -DLLVM_ENABLE_ZSTD=FORCE_ON -DLLVM_USE_STATIC_ZSTD=ON \
             -DZLIB_ROOT="$prefix" -DZLIB_USE_STATIC_LIBS=ON -Dzstd_ROOT="$prefix" \
             -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_BUILD_TOOLS=OFF \
             -DLLVM_INCLUDE_UTILS=OFF -DLLVM_INCLUDE_DOCS=OFF -DLLD_BUILD_TOOLS=OFF -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_PLUGINS=OFF -DLLVM_ENABLE_BINDINGS=OFF \
-            -DLLVM_ENABLE_Z3_SOLVER=OFF > "$root/out/llvm-android-cfg.log" 2>&1 || { tail -30 "$root/out/llvm-android-cfg.log"; exit 1; }
+            -DLLVM_ENABLE_Z3_SOLVER=OFF "${llvmvc[@]}" > "$root/out/llvm-android-cfg.log" 2>&1 || { tail -30 "$root/out/llvm-android-cfg.log"; exit 1; }
         run cmake --build "$lb" -j "$J" --target lldELF lldCommon LLVMAArch64CodeGen LLVMAArch64AsmParser LLVMOrcJIT LLVMPasses LLVMIRReader LLVMLTO LLVMDTLTO LLVMObject \
             LLVMTargetParser LLVMOption LLVMBinaryFormat LLVMProfileData LLVMDebugInfoDWARF LLVMExecutionEngine LLVMAArch64Desc LLVMAArch64Info LLVMAArch64Utils LLVMMCJIT \
             LLVMRuntimeDyld LLVMJITLink LLVMOrcTargetProcess LLVMOrcShared > "$root/out/llvm-android-build.log" 2>&1 || { tail -40 "$root/out/llvm-android-build.log"; exit 1; }
+        echo "${llvmvc[*]}" > "$lb/.bb-config"
     fi
     llvm=$lb
     march=armv8-a   # FEX adds +crc; generic ARMv8 so that the binary runs on any phone
-    earlyarg=(-DBB_RECOMP_NO_X86=ON "-DBB_RECOMP_LLD_INCLUDE=$src/lld/include;$lb/tools/lld/include")
+    # mimalloc replaces operator new/delete (src/alloc_override.cpp): LLVM on bionic's allocator (Scudo) took 1.5x the glibc build's time on the Thor
+    mi=$x86deps/mimalloc/mimalloc-3.6.0
+    [[ -f $mi/src/static.c ]] || { echo "no mimalloc 3.6.0 at $mi (package-windows.sh fetches it)" >&2; exit 1; }
+    earlyarg=(-DBB_RECOMP_NO_X86=ON "-DBB_RECOMP_LLD_INCLUDE=$src/lld/include;$lb/tools/lld/include" -DBB_RECOMP_MIMALLOC_DIR="$mi")
 else
     echo "usage: $0 aarch64|x86_64|android" >&2; exit 2
 fi

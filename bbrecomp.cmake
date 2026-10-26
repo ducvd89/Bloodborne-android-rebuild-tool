@@ -193,7 +193,14 @@ endif()
 if(BB_RECOMP_MIMALLOC_DIR)
   target_sources(bb-recomp PRIVATE "${BB_RECOMP_MIMALLOC_DIR}/src/static.c" "${BBR}/alloc_override.cpp")
   target_include_directories(bb-recomp PRIVATE "${BB_RECOMP_MIMALLOC_DIR}/include")
-  set_source_files_properties("${BB_RECOMP_MIMALLOC_DIR}/src/static.c" PROPERTIES COMPILE_OPTIONS "-O2;-fno-lto;-DMI_MALLOC_OVERRIDE=0;-DMI_SECURE=0;-DNDEBUG")
+  # mimalloc tests defined(MI_MALLOC_OVERRIDE): on Android (bionic) the macro would make static.c replace malloc and new/delete itself, which collides
+  # with alloc_override.cpp; there it is left undefined (only new/delete are replaced, malloc stays bionic's)
+  if(ANDROID)
+    set(BBR_MI_OVERRIDE "")
+  else()
+    set(BBR_MI_OVERRIDE "-DMI_MALLOC_OVERRIDE=0;")
+  endif()
+  set_source_files_properties("${BB_RECOMP_MIMALLOC_DIR}/src/static.c" PROPERTIES COMPILE_OPTIONS "-O2;-fno-lto;${BBR_MI_OVERRIDE}-DMI_SECURE=0;-DNDEBUG")
 endif()
 
 # Windows (llvm-mingw): the POSIX names the shared sources use (windows/posix_shim.h), a static executable.
