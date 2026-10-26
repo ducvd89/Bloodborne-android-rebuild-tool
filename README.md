@@ -10,6 +10,10 @@ time from **your own** copy of the game, once, into a file (`libbbaot.so`). This
 > **Version 1.2.0** writes native code with **ABI version 2**. It needs the app **2.1.0 Beta or newer**, and app 2.1.0 needs a library from tool 1.2.0. Libraries built by
 > tool 1.1.0 or older (ABI 1) are refused by the app and must be rebuilt: they contain a bug that can stop the game with `guest trap (0x800d0b, 0x287188a)`.
 > Tested on an AYN Thor (Snapdragon 8 Gen 2).
+>
+> **Version 1.2.1** changes only the phone build (the app 2.1.1 carries it): it is now an Android (NDK, bionic) program, so it also runs on Android 16
+> and 17, where the security policy stopped the 1.2.0 phone build at once. The code it writes is the same as 1.2.0's, byte for byte; on a PC keep using 1.2.0.
+> Tested on an AYN Thor (Android 13) and an OPPO Find N5 (Snapdragon 8 Elite, Android 16).
 
 ## Why you build it yourself
 

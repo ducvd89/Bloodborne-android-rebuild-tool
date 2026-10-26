@@ -136,7 +136,7 @@ else
 fi
 
 mkdir -p out
-run cmake -S . -B "$out" -G Ninja -DFEX_SOURCE_DIR="$fex" -DBB_RECOMP_BUNDLED=ON -DBB_RECOMP_VERSION="${BB_RECOMP_VERSION:-1.2.0}" \
+run cmake -S . -B "$out" -G Ninja -DFEX_SOURCE_DIR="$fex" -DBB_RECOMP_BUNDLED=ON -DBB_RECOMP_VERSION="${BB_RECOMP_VERSION:-1.2.1}" \
     "${toolchain[@]}" "${earlyarg[@]}" -DBB_RECOMP_LLVM_DIR="$llvm/lib/cmake/llvm" -DBB_RECOMP_DEPS_PREFIX="$prefix" -DBB_RECOMP_MARCH="$march" \
     -DBB_RECOMP_JOBS="$J" > "$out.cfg.log" 2>&1 || { tail -30 "$out.cfg.log"; exit 1; }
 run cmake --build "$out" -j "$J"

@@ -24,7 +24,7 @@ while (( $# )); do
 done
 J=${BB_JOBS:-22}
 run() { nice -n 19 "$@"; }
-VERSION=${BB_RECOMP_VERSION:-1.2.0}
+VERSION=${BB_RECOMP_VERSION:-1.2.1}
 APPNAME=Bloodborne-Android-Rebuild-Tool-x86_64.AppImage
 
 # The Android NDK r29 (BB_NDK, else .local-deps/android/ndk/android-ndk-r29, which fetch-ndk.sh downloads).

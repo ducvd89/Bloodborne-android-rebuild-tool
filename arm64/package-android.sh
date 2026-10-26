@@ -10,7 +10,7 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 root=$PWD
-VERSION=${BB_RECOMP_VERSION:-1.2.0}
+VERSION=${BB_RECOMP_VERSION:-1.2.1}
 export BB_RECOMP_VERSION=$VERSION
 run() { nice -n 19 "$@"; }
 binary=${BB_ANDROID_BINARY:-ndk}

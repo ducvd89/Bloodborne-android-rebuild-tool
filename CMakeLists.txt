@@ -32,7 +32,7 @@ option(BB_RECOMP_BUNDLED "Self-contained bb-recomp: static LLVM + LLD, no NDK or
 set(BB_RECOMP_LLVM_DIR "" CACHE PATH "LLVM's lib/cmake/llvm (default: the system LLVM)")
 set(BB_RECOMP_DEPS_PREFIX "" CACHE PATH "prefix with static zlib and zstd (BB_RECOMP_BUNDLED)")
 option(BB_RECOMP_NO_X86 "Bundled build without the X86 code generator (only --target aarch64): the phone binary (arm64/build.sh)" OFF)
-set(BB_RECOMP_VERSION "1.2.0" CACHE STRING "tool version written to libbbaot.json")
+set(BB_RECOMP_VERSION "1.2.1" CACHE STRING "tool version written to libbbaot.json")
 # Windows (experimental, cross-compiled on Linux with llvm-mingw): -DBB_RECOMP_TOOLCHAIN_FILE=windows/toolchain-mingw-x86_64.cmake
 # -DBB_MINGW_ROOT=<llvm-mingw dir>; LLVM_DIR and the deps prefix then name builds for mingw (windows/build.sh).
 set(BB_RECOMP_TOOLCHAIN_FILE "" CACHE FILEPATH "CMake toolchain file for a cross build (Windows: windows/toolchain-mingw-x86_64.cmake)")
