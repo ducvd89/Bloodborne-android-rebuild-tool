@@ -42,6 +42,8 @@ set(BB_SYSROOT "" CACHE PATH "sysroot for linux-jammy-toolchain.cmake")
 set(BB_LLVM_ROOT "" CACHE PATH "LLVM release tarball directory for linux-jammy-toolchain.cmake")
 # AArch64 static glibc (arm64/build.sh): directory with libc-early.a and libm-early.a, linked whole before everything else (see bbrecomp.cmake)
 set(BB_RECOMP_EARLY_LIBS_DIR "" CACHE PATH "directory with libc-early.a and libm-early.a (static AArch64 glibc build)")
+# Android NDK (arm64/build.sh android): -DBB_RECOMP_TOOLCHAIN_FILE=<NDK>/build/cmake/android.toolchain.cmake, a dynamically linked bionic PIE, libc++ static
+set(BB_ANDROID_PLATFORM "android-30" CACHE STRING "ANDROID_PLATFORM of the NDK build (the API level the executable needs at least)")
 set(BB_RECOMP_LLD_INCLUDE "" CACHE PATH "include directory of LLD's headers when LLVM is a build tree (Windows build)")
 # The window (Dear ImGui + SDL3, src/gui.cpp): BB_RECOMP_SDL_PREFIX holds a static SDL3 (lib/cmake/SDL3), BB_RECOMP_IMGUI_DIR the ImGui sources
 # (fetch-deps.sh fetches both). Without them bb-recomp is the command line tool only.
@@ -80,6 +82,11 @@ if(BB_RECOMP_TOOLCHAIN_FILE)
     set(BB_EXE ".exe")
   endif()
   set(BB_TOOLCHAIN_ARGS "-DCMAKE_TOOLCHAIN_FILE=${BB_RECOMP_TOOLCHAIN_FILE}" "-DBB_MINGW_ROOT=${BB_MINGW_ROOT}" "-DBB_SYSROOT=${BB_SYSROOT}" "-DBB_LLVM_ROOT=${BB_LLVM_ROOT}")
+  if(BB_RECOMP_TOOLCHAIN_FILE MATCHES "android")
+    # -ffp-contract=off: clang fuses a*b+c into fmadd on AArch64 by default, which the x86-64 PC builds (no FMA in their baseline) never do: the floating point
+    # arithmetic inside LLVM's and the tool's own code (cost models, heuristics) must give the same decisions on the phone, or the .so differs byte for byte
+    list(APPEND BB_TOOLCHAIN_ARGS -DANDROID_ABI=arm64-v8a "-DANDROID_PLATFORM=${BB_ANDROID_PLATFORM}" -DANDROID_STL=c++_static "-DCMAKE_C_FLAGS=-ffp-contract=off -g0" "-DCMAKE_CXX_FLAGS=-ffp-contract=off -g0")
+  endif()
 endif()
 set(BB_TARGETS bb-recomp)
 set(BB_BUILT_FILES "<BINARY_DIR>/Bin/bb-recomp${BB_EXE}")

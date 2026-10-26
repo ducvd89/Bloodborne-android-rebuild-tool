@@ -21,6 +21,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include "worker_thread.h"
 
 using namespace llvm;
 
@@ -112,7 +113,7 @@ class Pool {
     }
   }
   const VariantJob& job;
-  std::vector<std::thread> th;
+  std::vector<WorkerThread> th;
   std::deque<Batch> q;
   std::condition_variable cv;
   size_t depth = 2;

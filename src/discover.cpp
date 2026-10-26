@@ -8,6 +8,7 @@
 #include <atomic>
 #include <set>
 #include <thread>
+#include "worker_thread.h"
 
 namespace {
 struct Index {
@@ -110,7 +111,7 @@ DiscoverResult discoverEntries(const ElfImage& img, std::vector<Func>& funcs, st
         if (okay[k] || frontier[k].kind == 0) { targets[k] = std::move(r.outTargets); leas[k] = std::move(r.leaTargets); } // (junk targets of a data pointer are not followed)
       }
     };
-    std::vector<std::thread> th;
+    std::vector<WorkerThread> th;
     for (unsigned j = 0; j < std::max(1u, jobs); ++j) th.emplace_back(worker);
     for (auto& t : th) t.join();
     if (bbrStopRequested()) break;

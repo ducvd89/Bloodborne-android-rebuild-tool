@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Command line build of bb-recomp (no window; in-process LLD: BB_RECOMP_BUNDLED) that runs on an Android phone (arm64/package-android.sh makes out/android/ from it).
-#   arm64/build.sh aarch64   fully static AArch64 glibc executable (run under `adb shell`), out/arm64/bb-recomp
+#   arm64/build.sh android   Android NDK r29 executable (bionic, PIE, libc++ static; needs only libc.so, libm.so, libdl.so), out/android-ndk/bb-recomp: what the app ships
+#   arm64/build.sh aarch64   fully static AArch64 glibc executable (run under `adb shell`), out/arm64/bb-recomp: the measurement build; the app's seccomp filter (Android 16+)
+#                            kills it, because glibc makes syscalls bionic never does (rseq, set_robust_list, faccessat2 ...)
 #   arm64/build.sh x86_64    the same sources as a static x86-64 executable, for the PC baseline, out/x86-bundled/bb-recomp
-# The aarch64 build has no X86 code generator (BB_RECOMP_NO_X86: only --target aarch64 works); the x86_64 one keeps both. No window (no SDL/ImGui), no AppImage. Runs at nice 19 with at most BB_JOBS (default 12) jobs.
-# Needs the x86-64 LLVM 23.1.3 tarball, its sysroot (jammy), zlib/zstd and the prepared FEX tree of a normal checkout (fetch-deps.sh, fetch-fex.sh):
-# BB_X86_DEPS (default ../Bloodborne-android-rebuild-tool/.local-deps) and BB_FEX_TREE (default ../Bloodborne-android-rebuild-tool/out/recomp-fex)
-# are only read. Everything for AArch64 (LLVM 23.1.3 Linux-ARM64 tarball, arm64 sysroot, zlib, zstd) goes into .local-deps here.
+# The android and aarch64 builds have no X86 code generator (BB_RECOMP_NO_X86: only --target aarch64 works); the x86_64 one keeps both. No window (no SDL/ImGui), no AppImage. Runs at nice 19 with at most BB_JOBS (default 12) jobs.
+# Needs the x86-64 LLVM 23.1.3 tarball (its llvm-tblgen builds the cross LLVM), zlib/zstd and the prepared FEX tree of a normal checkout (fetch-deps.sh, fetch-fex.sh):
+# BB_X86_DEPS (default ../Bloodborne-android-rebuild-tool/.local-deps) and BB_FEX_TREE (default ../Bloodborne-android-rebuild-tool/out/recomp-fex) are only read,
+# except that the android mode builds its own LLVM + LLD 23.1.3 (llvm/build-android), zlib and zstd (deps/prefix-android) there, with the LLVM sources and the NDK r29
+# (BB_NDK) it finds there: the first run takes about 4 minutes on 22 cores (LLVM + LLD is most of it), later runs only the bb-recomp build. The android build is made with
+# -ffp-contract=off (the x86-64 builds have no FMA, so the floating point inside LLVM must not fuse either, or the .so would differ) and API level BB_ANDROID_API (30).
+# Everything for AArch64 glibc (LLVM 23.1.3 Linux-ARM64 tarball, arm64 sysroot, zlib, zstd) goes into .local-deps here.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 root=$PWD
@@ -70,8 +75,56 @@ elif [[ $mode == aarch64 ]]; then
         cp "$sysroot/usr/lib/aarch64-linux-gnu/libm.a" "$early/libm-early.a"
     fi
     earlyarg=(-DBB_RECOMP_EARLY_LIBS_DIR="$early" -DBB_RECOMP_NO_X86=ON)   # no X86 code generator: the phone only needs --target aarch64
+elif [[ $mode == android ]]; then
+    # NDK r29 (bionic): clang and lld of the NDK build a dynamically linked PIE executable (libc.so, libm.so, libdl.so; libc++ static) that the app can run:
+    # nothing glibc does behind the app's seccomp filter (rseq, set_robust_list, faccessat2 ...) is in it. LLVM + LLD, zlib and zstd are built for it first.
+    out=$root/out/android-ndk
+    ndk=${BB_NDK:-$x86deps/android/ndk/android-ndk-r29}
+    [[ -f $ndk/build/cmake/android.toolchain.cmake ]] || { echo "no Android NDK r29 at $ndk (set BB_NDK, or run fetch-ndk.sh)" >&2; exit 1; }
+    api=${BB_ANDROID_API:-30}
+    prefix=$x86deps/deps/prefix-android
+    lb=$x86deps/llvm/build-android
+    src=$x86deps/llvm/src/llvm-project-$LLVM_VER.src
+    [[ -d $src/llvm ]] || { echo "no LLVM $LLVM_VER sources at $src (package-windows.sh or fetch-deps.sh fetch them)" >&2; exit 1; }
+    tcfile=$ndk/build/cmake/android.toolchain.cmake
+    ndkargs=(-DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$api -DANDROID_STL=c++_static)
+    # -ffp-contract=off: the same floating point results as the x86-64 builds (see CMakeLists.txt); -g0: the NDK's default -g makes the libraries 10x larger
+    tc=(-DCMAKE_TOOLCHAIN_FILE="$tcfile" "${ndkargs[@]}" -DCMAKE_FIND_ROOT_PATH="$prefix" "-DCMAKE_C_FLAGS=-ffp-contract=off -g0" "-DCMAKE_CXX_FLAGS=-ffp-contract=off -g0")
+    toolchain=(-DBB_RECOMP_TOOLCHAIN_FILE="$tcfile" -DBB_ANDROID_PLATFORM=android-$api)
+    mkdir -p "$prefix" "$x86deps/deps"
+    # zlib and zstd, static (LLVM's CMake and bbrecomp.cmake find them again by CMAKE_FIND_ROOT_PATH / the deps prefix)
+    if [[ ! -f $prefix/lib/libz.a ]]; then
+        tar -xf "$x86deps/deps/dl/zlib-1.3.1.tar.xz" -C "$x86deps/deps" && rm -rf "$x86deps/deps/b-z-android"
+        run cmake -S "$x86deps/deps/zlib-1.3.1" -B "$x86deps/deps/b-z-android" -G Ninja "${tc[@]}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" >/dev/null
+        run cmake --build "$x86deps/deps/b-z-android" -j "$J" >/dev/null
+        cmake --install "$x86deps/deps/b-z-android" >/dev/null
+        rm -f "$prefix"/lib/libz.so*
+    fi
+    if [[ ! -f $prefix/lib/libzstd.a ]]; then
+        tar -xf "$x86deps/deps/dl/zstd-1.5.7.tar.gz" -C "$x86deps/deps" && rm -rf "$x86deps/deps/b-zstd-android"
+        run cmake -S "$x86deps/deps/zstd-1.5.7/build/cmake" -B "$x86deps/deps/b-zstd-android" -G Ninja "${tc[@]}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" \
+            -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON >/dev/null
+        run cmake --build "$x86deps/deps/b-zstd-android" -j "$J" >/dev/null
+        cmake --install "$x86deps/deps/b-zstd-android" >/dev/null
+    fi
+    # LLVM + LLD for the phone: the AArch64 target only (BB_RECOMP_NO_X86), no tools, the libraries bb-recomp links (the list of package-windows.sh without X86).
+    # The release build of the official tarballs (no assertions), so the code it generates is the same as the PC tool's.
+    if [[ ! -f $lb/lib/liblldELF.a ]]; then
+        run cmake -S "$src/llvm" -B "$lb" -G Ninja "${tc[@]}" -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=lld -DLLVM_TARGETS_TO_BUILD=AArch64 \
+            -DLLVM_NATIVE_TOOL_DIR="$x86llvm/bin" -DLLVM_HOST_TRIPLE=aarch64-unknown-linux-android$api -DLLVM_ENABLE_ZLIB=FORCE_ON -DLLVM_ENABLE_ZSTD=FORCE_ON -DLLVM_USE_STATIC_ZSTD=ON \
+            -DZLIB_ROOT="$prefix" -DZLIB_USE_STATIC_LIBS=ON -Dzstd_ROOT="$prefix" \
+            -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_BUILD_TOOLS=OFF \
+            -DLLVM_INCLUDE_UTILS=OFF -DLLVM_INCLUDE_DOCS=OFF -DLLD_BUILD_TOOLS=OFF -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_PLUGINS=OFF -DLLVM_ENABLE_BINDINGS=OFF \
+            -DLLVM_ENABLE_Z3_SOLVER=OFF > "$root/out/llvm-android-cfg.log" 2>&1 || { tail -30 "$root/out/llvm-android-cfg.log"; exit 1; }
+        run cmake --build "$lb" -j "$J" --target lldELF lldCommon LLVMAArch64CodeGen LLVMAArch64AsmParser LLVMOrcJIT LLVMPasses LLVMIRReader LLVMLTO LLVMDTLTO LLVMObject \
+            LLVMTargetParser LLVMOption LLVMBinaryFormat LLVMProfileData LLVMDebugInfoDWARF LLVMExecutionEngine LLVMAArch64Desc LLVMAArch64Info LLVMAArch64Utils LLVMMCJIT \
+            LLVMRuntimeDyld LLVMJITLink LLVMOrcTargetProcess LLVMOrcShared > "$root/out/llvm-android-build.log" 2>&1 || { tail -40 "$root/out/llvm-android-build.log"; exit 1; }
+    fi
+    llvm=$lb
+    march=armv8-a   # FEX adds +crc; generic ARMv8 so that the binary runs on any phone
+    earlyarg=(-DBB_RECOMP_NO_X86=ON "-DBB_RECOMP_LLD_INCLUDE=$src/lld/include;$lb/tools/lld/include")
 else
-    echo "usage: $0 aarch64|x86_64" >&2; exit 2
+    echo "usage: $0 aarch64|x86_64|android" >&2; exit 2
 fi
 
 mkdir -p out

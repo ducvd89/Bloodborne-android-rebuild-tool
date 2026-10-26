@@ -9,11 +9,11 @@ and tool version). The full contract is in `docs/NATIVE_CPU.md` of the tool's re
 
 | File | Use |
 |---|---|
-| `libbbrecomp.so` | the program: a static AArch64 executable (not a shared library; it carries LLVM and LLD). Ship it as `jniLibs/arm64-v8a/libbbrecomp.so` with native libraries extracted to disk (`android:extractNativeLibs="true"` / `useLegacyPackaging`) and run it from `nativeLibraryDir` |
+| `libbbrecomp.so` | the program: an AArch64 executable built with the Android NDK (r29, API 30, bionic: a dynamically linked PIE with `/system/bin/linker64` as interpreter, needing only `libc.so`, `libm.so` and `libdl.so`; libc++, LLVM and LLD are linked in; it is not a shared library). It only makes system calls that bionic makes, so the app's seccomp filter lets it run, and a crash leaves a debuggerd tombstone. Ship it as `jniLibs/arm64-v8a/libbbrecomp.so` with native libraries extracted to disk (`android:extractNativeLibs="true"` / `useLegacyPackaging`) and run it from `nativeLibraryDir` |
 | `bundle/` | the four files the link of `libbbaot.so` needs (`helpers-aarch64.o`, `libbbcpu-stub.so`, `libm.so`, `libclang_rt.builtins-aarch64-android.a`); `--bundle-dir`. They are read as files: copy them out of the APK (assets) to the app's storage once |
 | `variants/*.txt` | the variant catalog (patch groups and hook sites of the port); `--variants <dir>`. Copy out of the APK the same way |
 | `licenses/` | the licenses of what is linked in (ship them with the app) |
-| `VERSION` | tool version, git commit, ABI version of the libraries it writes |
+| `VERSION` | tool version, git commit, ABI version of the libraries it writes, how the program was built (`target` line) |
 
 ## Command line
 

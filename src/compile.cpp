@@ -32,6 +32,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include "worker_thread.h"
 #ifndef _WIN32
 #include <sys/resource.h>
 #else
@@ -553,7 +554,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
         if (fr.status == LiftStatus::Failed || fr.status == LiftStatus::Crashed) part[id].push_back({f.start, f.end, false});
       }
     };
-    std::vector<std::thread> th;
+    std::vector<WorkerThread> th;
     for (unsigned i = 0; i < part.size(); ++i) th.emplace_back(w, i);
     for (auto& t : th) t.join();
     if (bbrStopRequested()) return 128 + g_bbrStopSignal.load();
@@ -728,7 +729,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
       bbrWork("compile", workDone, workTotal);
     }
   };
-  std::vector<std::thread> th;
+  std::vector<WorkerThread> th;
   for (unsigned i = 0; i < jobs; ++i) th.emplace_back(worker);
   for (auto& t : th) t.join();
   if (bbrStopRequested()) return 128 + g_bbrStopSignal.load();

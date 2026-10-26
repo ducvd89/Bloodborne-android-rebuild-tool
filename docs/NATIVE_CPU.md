@@ -232,7 +232,7 @@ library does not cover a place the game jumped to. Copy `aot-misses.log` to the 
 
 Bloodborne Android 2.1.0 Beta ships the tool's command line build as `libbbrecomp.so` and runs it to make `libbbaot.so` on the phone. `arm64/package-android.sh`
 makes the files (`out/android/`: the binary, `bundle/`, `variants/`, `licenses/`, `VERSION`, `README-ANDROID.md`, and the tarball
-`bb-recomp-android-aarch64.tar.xz`). The binary is a static AArch64 executable (glibc, LLVM 23.1.3 with only the AArch64 back end, LLD in the process, 58 MB stripped); it needs no
+`bb-recomp-android-aarch64.tar.xz`). The binary is an Android NDK executable (bionic, a dynamically linked PIE that needs only libc, libm and libdl; LLVM 23.1.3 with only the AArch64 back end, LLD in the process, 50 MB stripped); it needs no
 NDK, no clang, no Python, no `eboot.elf`, no `link.json` and no `.prx` folder. Same sources as the PC tool: the library it writes is byte-identical to the PC's for the same
 game, tool version and `--shards` (checked: x86-64 build, the AArch64 build under qemu, and the AYN Thor).
 

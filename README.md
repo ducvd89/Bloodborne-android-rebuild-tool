@@ -228,8 +228,9 @@ install), builds LLVM and LLD for mingw from source (about 12 minutes on 22 core
 
 ### The Android build (what the app ships)
 
-`arm64/build.sh aarch64` builds the command line tool as a static AArch64 executable (it needs the LLVM Linux-ARM64 tarball and an arm64 sysroot, which it fetches into `.local-deps`),
-and `arm64/package-android.sh` packs it with the link files, the variant catalog and the licenses into `out/android/` and `out/dist/bb-recomp-android-aarch64.tar.xz`. The app runs
+`arm64/build.sh android` builds the command line tool with the Android NDK r29 as a bionic AArch64 executable (a dynamically linked PIE that needs only libc, libm and libdl; it builds LLVM 23.1.3 + LLD
+for the phone from source first, like the Windows build does). `arm64/build.sh aarch64` is the older static glibc build (it needs the LLVM Linux-ARM64 tarball and an arm64 sysroot, which it fetches into `.local-deps`;
+Android 16 and newer kill it with SIGSYS). `arm64/package-android.sh` packs it with the link files, the variant catalog and the licenses into `out/android/` and `out/dist/bb-recomp-android-aarch64.tar.xz`. The app runs
 it as `libbbrecomp.so`; how is described in [docs/NATIVE_CPU.md](docs/NATIVE_CPU.md) ("The phone build") and `arm64/README-ANDROID.md`.
 
 ### nasm for the assembly tests
@@ -266,7 +267,7 @@ variants/gen_bbsc.py        --main-repo ../Bloodborne-Android --eboot <eboot.elf
 | Path | What |
 |---|---|
 | `src/` | the tool: FEX lifter, IR census, LLVM lowering, ARM64 object and `.so` writer, the player program (`player.cpp`, `aot_json.cpp`, `pkgs.cpp`, `pkgverify.cpp`), the window (`gui.cpp`), the test runners |
-| `arm64/` | the static AArch64 build and the packing of what the app ships (`build.sh`, `package-android.sh`, `README-ANDROID.md`) |
+| `arm64/` | the Android NDK build (and the static glibc one) and the packing of what the app ships (`build.sh`, `package-android.sh`, `README-ANDROID.md`) |
 | `helpers/` | the x87 helpers the lowered code calls (adapted from FEX, MIT; SoftFloat, BSD-3-Clause) |
 | `variants/` | the generated variant and hook catalogs, and their generators |
 | `windows/` | support files of the Windows (llvm-mingw) build |
