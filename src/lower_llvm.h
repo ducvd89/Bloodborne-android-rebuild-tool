@@ -39,6 +39,8 @@ struct LowerOptions {
   std::function<std::string(uint64_t)> callName; // direct-call symbol of a target (isKnownUnit must be true for it); default unitName(vaddr)
   std::string defPrefix;                        // prefix of the functions defined here ("bbr_" when empty); variants use "bbrv<k>_"
   const HookSites* hookSites = nullptr;         // native hook sites (every unit that holds the instruction gets the slot test)
+  bool stableHookRefs = false;                  // reach a site's slot through the symbol bbr_hook_slot_<hex vaddr> (the table object defines it as &bbr_hook_slot[k]) and
+                                                // derive k at run time, so that no unit depends on the catalog order of the sites (delta rebuild); false: bbr_hook_slot[k] with k a constant
 };
 
 struct LowerResult {
@@ -50,7 +52,7 @@ struct LowerResult {
   uint32_t resumeCases = 0;             // call-return blocks reachable through the resume switch at the unit entry
   uint32_t granularUnits = 0, granularCases = 0; // the unit got granular entries: entry points (instruction boundaries) in its switch
   uint32_t hookSites = 0;               // hook slot tests emitted
-  std::vector<uint32_t> hookIdx;        // ... their site indices
+  std::vector<uint64_t> hookVaddr;      // ... their site addresses
   uint32_t switches = 0, switchCases = 0; // indirect jumps lowered as an LLVM switch over the unit's blocks, and their cases
   uint32_t volatileLoads = 0;           // guest loads in loops without stores, atomics or exits (spin-waits), lowered volatile
 };

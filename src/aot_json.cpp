@@ -163,7 +163,7 @@ std::string readGameMeta(const std::string& gameDir, GameMeta& out) {
   return "";
 }
 
-std::string writeAotJson(const std::string& jsonPath, const GameMeta& meta, const SoInfo& so, uint64_t imageSize) {
+std::string writeAotJson(const std::string& jsonPath, const GameMeta& meta, const SoInfo& so, uint64_t imageSize, const std::string& catalogHash) {
   std::ostringstream j;
   j << "{\n"
     << "  \"format\": 1,\n"
@@ -179,6 +179,8 @@ std::string writeAotJson(const std::string& jsonPath, const GameMeta& meta, cons
     << "  \"unit_count\": " << so.unitCount << ",\n"
     << "  \"function_count\": " << so.funcCount << ",\n"
     << "  \"tool\": " << jsonStr(std::string("bb-recomp ") + BBR_TOOL_VERSION) << ",\n"
+    << "  \"compiler_version\": " << jsonStr(BBR_COMPILER_VERSION) << ",\n"
+    << "  \"catalog_hash\": " << jsonStr(catalogHash.empty() ? "cbf29ce484222325" : catalogHash) << ",\n"
     << "  \"llvm\": " << jsonStr(LLVM_VERSION_STRING) << ",\n"
     << "  \"created\": " << jsonStr(isoNow()) << ",\n"
     << "  \"so_size\": " << so.size << ",\n"
@@ -190,12 +192,12 @@ std::string writeAotJson(const std::string& jsonPath, const GameMeta& meta, cons
   return "";
 }
 
-std::string checkAndWriteAotJson(const std::string& soPath, const std::string& bootPath, const GameMeta& meta, const std::string& jsonPath, SoInfo& so, uint64_t& imageSize) {
+std::string checkAndWriteAotJson(const std::string& soPath, const std::string& bootPath, const GameMeta& meta, const std::string& jsonPath, SoInfo& so, uint64_t& imageSize, const std::string& catalogHash) {
   uint64_t imageHash = 0;
   if (!imageHashOfBoot(bootPath, imageHash, imageSize)) return "the game image (boot-linked.bin) is not readable.";
   const std::string bad = readSo(soPath, imageSize, so);
   if (!bad.empty()) return "the library failed its check: " + bad;
   if (so.abiVersion != kBbrAbiVersion) return "the library has ABI version " + std::to_string(so.abiVersion) + ", expected " + std::to_string(kBbrAbiVersion);
   if (so.imageHash != imageHash) return "the library's image hash " + hex16(so.imageHash) + " is not the game image's " + hex16(imageHash);
-  return writeAotJson(jsonPath, meta, so, imageSize);
+  return writeAotJson(jsonPath, meta, so, imageSize, catalogHash);
 }

@@ -103,6 +103,15 @@ run "$nbin/bin/clang" --target=aarch64-linux-android30 -shared -nostdlib -Wl,-so
 cp "$nbin/sysroot/usr/lib/aarch64-linux-android/30/libm.so" "$d/share/bb-recomp/libm.so"
 cp "$builtins" "$d/share/bb-recomp/"
 mkdir -p "$d/share/bb-recomp/variants" && cp variants/*.txt "$d/share/bb-recomp/variants/"   # the catalogs only (the generators stay in the source tree)
+# CATALOG_HASH: the catalog hash (docs/COMPILER.md, "Catalog hash"; the same as bb-recomp --print-catalog-hash --variants <dir>), so the app can tell a library built from an older catalog
+python3 - "$d/share/bb-recomp/variants" > "$d/share/bb-recomp/variants/CATALOG_HASH" <<'PY'
+import sys, os
+d = sys.argv[1]; h = 0xcbf29ce484222325
+for n in sorted(f for f in os.listdir(d) if f.endswith(".txt")):
+    for b in (n.encode(), b"\0", open(os.path.join(d, n), "rb").read(), b"\0"):
+        for c in b: h = ((h ^ c) * 0x100000001b3) & 0xffffffffffffffff
+print("%016x" % h)
+PY
 "$mingw/bin/llvm-strip" -o "$d/bb-recomp.exe" out/recomp-win/bb-recomp.exe
 cp out/windows/pkg-tool/ps4-pkg-tool.exe "$d/"
 fex=$(sed -n 's/^FEX_SOURCE_DIR:PATH=//p' out/recomp-win/CMakeCache.txt)

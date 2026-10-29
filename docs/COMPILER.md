@@ -153,6 +153,34 @@ links it into the `.so` (with libm as `DT_NEEDED`, `--helpers-dir` to use other 
 `helpers/test/test_x87.c` checks the conversions against the host's x87 unit (6.4 M random and edge-case values, 4 rounding modes): 0 mismatches
 (only unnormal 80-bit encodings differ).
 
+## Delta rebuild: compiler version, shard keys, catalog hash, build manifest
+
+The phone rebuilds `libbbaot.so` when the hook or variant catalog changes. The goal is that it recompiles only the shards the change reaches, and that the library is byte-identical to a full build.
+
+**Compiler version (`BBR_COMPILER_VERSION`, `src/version.h`).** A string bumped **by hand** whenever the code the tool generates for the same input changes: the FEX lifter or its options, the lowering (`lower_*.cpp`), the optimiser or code generator
+settings, the LLVM version, symbol naming, the shard split. A change to the catalogs, the UI, the app or the tool version alone does not bump it. It replaces the tool version in the `--resume` key and is stored in `libbbaot.json` (`compiler_version`)
+and in the build manifest. Forgetting a bump makes an old object look current: when in doubt, bump.
+
+**Stable hook references.** A unit does not know where its hook sites are in the catalog. It reads and calls the slot through the symbol `bbr_hook_slot_<hex vaddr>` (hidden, one per site) and passes the callback `k = (&bbr_hook_slot_<site> - &bbr_hook_slot) / 8`,
+computed at run time on the (cold) path that is only taken when the slot is set. Only the table object defines those symbols, as aliases of `&bbr_hook_slot[k]`, `k` = position of the site in the merged catalog (sorted by address). The runtime ABI is unchanged
+(`bbr_hook_sites[]`, `bbr_hook_slot[]`, the callback `(GuestState*, k)`, ABI version 2). Inserting a site shifts `k` in the table only. Everything else in a shard that carries a number is already position independent: units are named by address, `bbr_dirty` indices come from the unit set (image dependent, not catalog dependent).
+
+**Shard key (`--resume`, `.stat` files).** `key = FNV-based 128 bit hash of`:
+global part: compiler version, image hash/size, lift base, target, optimisation level, CPU and features, lowering and lift options, the shard count and function count, the unit set, the granular functions, the function list, and whether the catalogs declare any hook site at all
+(with hooks the lowering takes other paths in every unit); per shard: its index, its function range and function list, and the hook sites (address and resume points, not index, length or flags) whose address or resume point lies in the shard's code: the address hull of its functions and of the units
+they produce (a unit may run past its function). What a shard's code depends on outside its functions, found by the audit: the unit set (direct calls go to any unit, `bbr_dirty` indices, `isKnownUnit`), the granular set, the function list, the image bytes (jump tables, relocated constants),
+all in the global part; the catalog only through hook sites (`forceGuestOpcode` at the site and its resume points, the slot test, the block split at resume points). Variant patches never enter a shard (variants are separate objects built from patched bytes). The shard boundaries come from the function sizes and the shard count only, so a catalog change does not move them.
+A `.stat` file also holds the SHA-256 of the object. On start the tool decides which shards are kept (key and object size match; with a manifest, also the object hash) *before* any work, prints `reuse: N of 64 shards kept ...`, and counts only the rebuilt shards in the progress (`BBR-PROGRESS compile`).
+The table object, the variant objects, the x87 helpers and the link are rebuilt every time (measured on the PC: variants 4.4 s CPU on 22 threads, table 1.0 s, link 0.3 s); variants are batched by size with global numbering, so they are not keyed.
+
+**Catalog hash.** 64-bit FNV-1a (offset 0xcbf29ce484222325, prime 0x100000001b3) over the catalog files of `--variants` (a directory: its `*.txt` files) in the order of their file names (bytewise, ties by full path). For each file it feeds: the file name without directory, one 0 byte, the file's bytes exactly as stored, one 0 byte.
+Printed as 16 lowercase hex digits by `bb-recomp --print-catalog-hash --variants <dir>`; no catalog files: `cbf29ce484222325`. It is `catalog_hash` in `libbbaot.json` and in `variants/CATALOG_HASH` of the package (written by `package.sh`, `package-windows.sh`, `arm64/package-android.sh`). A library whose `catalog_hash` differs from the bundle's was built from an older catalog.
+
+**Build manifest (`--manifest-out <file>`, `--manifest <file>`).** A text file a PC build writes (needs `--resume`) and a phone build can read: `compiler`, `image <hash> <size> <base>`, `catalog`, `options` (the global key), per shard `shard <k> <first function> <end function> <key> <object size> <object sha256>`,
+and `so <size> <sha256>`. Function indices, counts, keys and hashes only: no code and no game bytes. The manifest is ignored when the compiler version, the image or the shard split differ. Otherwise: (a) a kept shard whose key is the manifest's must have the manifest's object SHA-256, else it is rebuilt (`manifest: shard k: ...`);
+(b) the shards to rebuild are known up front (exact progress); (c) a rebuilt shard with the manifest's key that comes out different prints `MANIFEST MISMATCH`; after the link, if catalog, options and every shard match the manifest, the library's SHA-256 must be the manifest's, else `MANIFEST MISMATCH` with both hashes
+(the build still succeeds: it is the library the tool built, the message says it differs from the PC's). Not done: taking the scan, discovery and unit tables from the manifest (they cost about 8 s of one core on the PC for the whole analysis including the pre-pass lift, against 15 s wall for the delta: not worth a second source of truth).
+
 ## How it works
 
 - `elf_image.cpp`: maps the PT_LOAD segments at `base + vaddr` (default base 0x200000000: vaddr 0 cannot be

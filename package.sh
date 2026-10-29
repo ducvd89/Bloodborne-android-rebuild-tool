@@ -66,6 +66,15 @@ run "$nbin/bin/clang" --target=aarch64-linux-android30 -shared -nostdlib -Wl,-so
 cp "$nbin/sysroot/usr/lib/aarch64-linux-android/30/libm.so" "$share/libm.so"
 cp "$builtins" "$share/"
 mkdir -p "$share/variants" && cp variants/*.txt "$share/variants/"   # the catalogs only (the generators stay in the source tree)
+# CATALOG_HASH: the catalog hash (docs/COMPILER.md, "Catalog hash"; the same as bb-recomp --print-catalog-hash --variants <dir>), so the app can tell a library built from an older catalog
+python3 - "$share/variants" > "$share/variants/CATALOG_HASH" <<'PY'
+import sys, os
+d = sys.argv[1]; h = 0xcbf29ce484222325
+for n in sorted(f for f in os.listdir(d) if f.endswith(".txt")):
+    for b in (n.encode(), b"\0", open(os.path.join(d, n), "rb").read(), b"\0"):
+        for c in b: h = ((h ^ c) * 0x100000001b3) & 0xffffffffffffffff
+print("%016x" % h)
+PY
 strip -o "$dist/usr/bin/bb-recomp" out/recomp-linux/bb-recomp
 strip -o "$dist/usr/bin/ps4-pkg-tool" out/linux/pkg-tool/ps4-pkg-tool
 chmod 755 "$dist/usr/bin/"*

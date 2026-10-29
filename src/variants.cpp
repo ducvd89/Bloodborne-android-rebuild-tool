@@ -76,7 +76,8 @@ bool parseCatalog(const std::string& text, const std::string& name, Catalog& out
   return true;
 }
 
-bool loadCatalogs(const std::vector<std::string>& paths, Catalog& out, std::string& err) {
+// The catalog files of the given paths: a directory contributes its *.txt files, a file stands for itself.
+static std::vector<std::string> catalogFiles(const std::vector<std::string>& paths) {
   namespace fs = std::filesystem;
   std::vector<std::string> files;
   for (auto& p : paths) {
@@ -88,6 +89,31 @@ bool loadCatalogs(const std::vector<std::string>& paths, Catalog& out, std::stri
       files.insert(files.end(), in.begin(), in.end());
     } else files.push_back(p);
   }
+  return files;
+}
+
+// FNV-1a 64 over the files in the order of their names (ties: the whole path): for each file its name without the directory, a 0 byte, its bytes exactly as stored, a 0 byte.
+bool catalogHash(const std::vector<std::string>& paths, uint64_t& hash, std::string& err) {
+  namespace fs = std::filesystem;
+  std::vector<std::string> files = catalogFiles(paths);
+  std::sort(files.begin(), files.end(), [](const std::string& a, const std::string& b) {
+    const std::string na = fs::path(a).filename().string(), nb = fs::path(b).filename().string();
+    return na != nb ? na < nb : a < b;
+  });
+  uint64_t h = 0xcbf29ce484222325ull; // (the standard FNV-1a offset basis)
+  auto feed = [&](const std::string& d) { for (unsigned char c : d) { h ^= c; h *= 1099511628211ull; } };
+  for (auto& f : files) {
+    std::ifstream in(f, std::ios::binary);
+    if (!in) { err = "cannot read " + f; return false; }
+    std::stringstream ss; ss << in.rdbuf();
+    feed(fs::path(f).filename().string()); feed(std::string(1, '\0')); feed(ss.str()); feed(std::string(1, '\0'));
+  }
+  hash = h;
+  return true;
+}
+
+bool loadCatalogs(const std::vector<std::string>& paths, Catalog& out, std::string& err) {
+  const std::vector<std::string> files = catalogFiles(paths);
   for (auto& f : files) {
     std::ifstream in(f);
     if (!in) { err = "cannot read " + f; return false; }

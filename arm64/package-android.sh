@@ -41,6 +41,15 @@ run "$nbin/bin/clang" --target=aarch64-linux-android30 -shared -nostdlib -Wl,-so
 cp "$nbin/sysroot/usr/lib/aarch64-linux-android/30/libm.so" "$out/bundle/libm.so"
 cp "$builtins" "$out/bundle/"
 cp variants/*.txt "$out/variants/"
+# CATALOG_HASH: the catalog hash (docs/COMPILER.md, "Catalog hash"; the same as bb-recomp --print-catalog-hash --variants <dir>), so the app can tell a library built from an older catalog
+python3 - "$out/variants" > "$out/variants/CATALOG_HASH" <<'PY'
+import sys, os
+d = sys.argv[1]; h = 0xcbf29ce484222325
+for n in sorted(f for f in os.listdir(d) if f.endswith(".txt")):
+    for b in (n.encode(), b"\0", open(os.path.join(d, n), "rb").read(), b"\0"):
+        for c in b: h = ((h ^ c) * 0x100000001b3) & 0xffffffffffffffff
+print("%016x" % h)
+PY
 # licenses of what is linked into the binary (as the desktop packages carry them)
 fex=$root/out/fex-src
 [[ -f $fex/LICENSE ]] || fex=$root/out/recomp-fex

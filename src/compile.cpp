@@ -5,9 +5,11 @@
 #include "version.h"
 #include "lower_llvm.h"
 #include "variant_compile.h"
+#include "sha256.h"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/GlobalAlias.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -52,7 +54,8 @@ struct ShardStats {
   uint64_t granularUnits = 0, granularCases = 0;
   uint64_t volatileLoads = 0, resumeCases = 0, switches = 0, switchCases = 0, indJmps = 0, jmpResolved = 0, jmpScanned = 0, jmpMem = 0, jmpReg = 0, jmpFailed = 0, tableBytes = 0;
   std::vector<uint64_t> unitVaddrs;
-  std::vector<uint32_t> hookSeen;   // hook site indices that got a slot test in this shard
+  std::vector<uint64_t> hookSeen;   // hook site addresses that got a slot test in this shard
+  std::string sha;                  // SHA-256 of the shard object (hex)
   std::vector<uint64_t> trapVaddrs; // units with an unsupported-op trap: bbr_dirty starts at 1 for them (the fallback CPU runs them)
   std::map<std::string, uint64_t> opUnits; // op name -> units containing a trap for it
 };
@@ -85,7 +88,7 @@ struct Sink : UnitSink {
     st.trapSites += lr.trapSites; st.irOps += lr.irOps; st.directCalls += lr.directCalls; st.dispatchCalls += lr.dispatchCalls;
     st.relocConsts += lr.relocConstants; st.switches += lr.switches; st.volatileLoads += lr.volatileLoads; st.switchCases += lr.switchCases; st.resumeCases += lr.resumeCases;
     st.granularUnits += lr.granularUnits; st.granularCases += lr.granularCases;
-    for (uint32_t i : lr.hookIdx) st.hookSeen.push_back(i);
+    for (uint64_t v : lr.hookVaddr) st.hookSeen.push_back(v);
     if (!lr.unsupported.empty()) { ++st.unitsWithTrap; st.trapVaddrs.push_back(entry); for (auto& n : lr.unsupported) ++st.opUnits[n]; }
   }
 };
@@ -256,7 +259,15 @@ bool emitTable(const std::vector<uint64_t>& ehHdrs, const std::vector<uint64_t>&
     if (rs.empty()) rs.push_back(ConstantInt::get(i64, 0));
     new GlobalVariable(m, ra, true, GlobalValue::ExternalLinkage, ConstantArray::get(ra, rs), "bbr_hook_resume");
     auto* sa = ArrayType::get(ptr, hs.size());
-    new GlobalVariable(m, sa, false, GlobalValue::ExternalLinkage, ConstantAggregateZero::get(sa), "bbr_hook_slot");
+    auto* slotArr = new GlobalVariable(m, sa, false, GlobalValue::ExternalLinkage, ConstantAggregateZero::get(sa), "bbr_hook_slot");
+    // bbr_hook_slot_<hex vaddr>: the address of the site's slot. The units name a site this way (LowerOptions::stableHookRefs) and compute its index as
+    // (&bbr_hook_slot_<site> - &bbr_hook_slot) / 8, so no unit depends on where the site is in the catalog: the catalog order only shows here.
+    for (size_t i = 0; i < ht->decls->size(); ++i) {
+      char nm[48]; snprintf(nm, sizeof nm, "bbr_hook_slot_%" PRIx64, (*ht->decls)[i].vaddr);
+      Constant* idx[] = {ConstantInt::get(i64, 0), ConstantInt::get(i64, i)};
+      auto* al = GlobalAlias::create(ptr, 0, GlobalValue::ExternalLinkage, nm, ConstantExpr::getInBoundsGetElementPtr(sa, slotArr, idx), &m);
+      al->setVisibility(GlobalValue::HiddenVisibility);
+    }
   }
   new GlobalVariable(m, i64, true, GlobalValue::ExternalLinkage, ConstantInt::get(i64, (opt.resumeEntries ? 1 : 0) | (opt.dirtyCheck ? 2 : 0) | (haveVariants ? 4 : 0) | (haveHooks ? 8 : 0) |
                                                                                                                 (std::find(granularFlags.begin(), granularFlags.end(), 1) != granularFlags.end() ? 16 : 0)), "bbr_abi_flags");
@@ -364,11 +375,11 @@ bool saveShard(const std::string& obj, const std::string& key, ShardStats& s) {
   FILE* f = fopen(tmp.c_str(), "w");
   if (!f) return false;
   size_t n; uint64_t* const* c = shardCounters(s, n);
-  fprintf(f, "bbr-shard 1\nkey %s\nobj %" PRIu64 "\ntimes %a %a %a\ncounters", key.c_str(), s.objBytes, s.liftLower, s.opt, s.codegen);
+  fprintf(f, "bbr-shard 2\nkey %s\nobj %" PRIu64 "\nsha %s\ntimes %a %a %a\ncounters", key.c_str(), s.objBytes, s.sha.c_str(), s.liftLower, s.opt, s.codegen);
   for (size_t i = 0; i < n; ++i) fprintf(f, " %" PRIu64, *c[i]);
   fprintf(f, "\nunits %zu", s.unitVaddrs.size()); for (uint64_t v : s.unitVaddrs) fprintf(f, " %" PRIx64, v);
   fprintf(f, "\ntraps %zu", s.trapVaddrs.size()); for (uint64_t v : s.trapVaddrs) fprintf(f, " %" PRIx64, v);
-  fprintf(f, "\nhooks %zu", s.hookSeen.size()); for (uint32_t v : s.hookSeen) fprintf(f, " %x", v);
+  fprintf(f, "\nhooks %zu", s.hookSeen.size()); for (uint64_t v : s.hookSeen) fprintf(f, " %" PRIx64, v);
   fprintf(f, "\nops %zu\n", s.opUnits.size()); for (auto& [name, cnt] : s.opUnits) fprintf(f, "%" PRIu64 " %s\n", cnt, name.c_str());
   fprintf(f, "end\n");
   const bool ok = fclose(f) == 0;
@@ -381,10 +392,11 @@ bool loadShard(const std::string& obj, const std::string& key, ShardStats& s) {
   FILE* f = fopen((obj + ".stat").c_str(), "r");
   if (!f) return false;
   bool ok = true;
-  char line[256], k[64] = {};
+  char line[256], k[64] = {}, shaBuf[72] = {};
   uint64_t objSize = 0;
   size_t n; uint64_t* const* c = shardCounters(s, n);
-  ok = fscanf(f, "bbr-shard 1\nkey %63s\nobj %" SCNu64 "\ntimes %la %la %la\ncounters", k, &objSize, &s.liftLower, &s.opt, &s.codegen) == 5 && key == k;
+  ok = fscanf(f, "bbr-shard 2\nkey %63s\nobj %" SCNu64 "\nsha %71s\ntimes %la %la %la\ncounters", k, &objSize, shaBuf, &s.liftLower, &s.opt, &s.codegen) == 6 && key == k;
+  s.sha = shaBuf;
   for (size_t i = 0; ok && i < n; ++i) ok = fscanf(f, " %" SCNu64, c[i]) == 1;
   auto list = [&](const char* tag, std::vector<uint64_t>& out) {
     size_t cnt = 0;
@@ -393,7 +405,7 @@ bool loadShard(const std::string& obj, const std::string& key, ShardStats& s) {
     for (size_t i = 0; i < cnt && ok; ++i) ok = fscanf(f, " %" SCNx64, &out[i]) == 1;
   };
   list("units", s.unitVaddrs); list("traps", s.trapVaddrs);
-  { std::vector<uint64_t> h; list("hooks", h); for (uint64_t v : h) s.hookSeen.push_back((uint32_t)v); }
+  list("hooks", s.hookSeen);
   size_t nops = 0;
   if (ok) ok = fscanf(f, " %15s %zu", line, &nops) == 2 && !strcmp(line, "ops");
   for (size_t i = 0; ok && i < nops; ++i) { uint64_t cnt; char name[200]; ok = fscanf(f, " %" SCNu64 " %199s", &cnt, name) == 2; if (ok) s.opUnits[name] = cnt; }
@@ -469,6 +481,72 @@ int reportUnits(const ElfImage& img, const std::vector<Func>& funcs, const LiftO
     printf("%d of %zu addresses are not covered\n", missing, opt.checkEntries.size());
   }
   return missing ? 3 : 0;
+}
+} // namespace
+
+
+namespace {
+// The build manifest (--manifest-out, --manifest; docs/COMPILER.md, "Build manifest"): what an earlier build of the same image with the same compiler produced, as
+// addresses, sizes, keys and hashes only (never code or game bytes). Text:
+//   bbr-manifest 1 / compiler <BBR_COMPILER_VERSION> / image <image hash hex16> <image size> <base hex> / catalog <hex16> / options <global key hex>
+//   shards <n> <functions>  then per shard: shard <k> <first function> <end function> <key hex> <object size> <object sha256>
+//   so <size> <sha256> (only when the build linked a library) / end
+struct Manifest {
+  struct Shard { uint32_t lo = 0, hi = 0; std::string key, sha; uint64_t size = 0; };
+  std::string compiler, catalog, options;
+  uint64_t imageHash = 0, imageSize = 0, base = 0, nshards = 0, nfuncs = 0, soSize = 0;
+  std::vector<Shard> shards;
+  std::string soSha;
+};
+
+std::string sha256OfFile(const std::string& path, uint64_t* size = nullptr) {
+  FILE* f = fopen(path.c_str(), "rb");
+  if (!f) return "";
+  Sha256 h; uint8_t b[1 << 16]; size_t n; uint64_t total = 0;
+  while ((n = fread(b, 1, sizeof b, f)) > 0) { h.update(b, n); total += n; }
+  const bool bad = ferror(f);
+  fclose(f);
+  if (bad) return "";
+  uint8_t d[32]; h.final(d);
+  if (size) *size = total;
+  return Sha256::hex(d);
+}
+std::string sha256OfBytes(const std::string& d) { Sha256 h; h.update(d.data(), d.size()); uint8_t o[32]; h.final(o); return Sha256::hex(o); }
+
+bool writeManifest(const std::string& path, const Manifest& m) {
+  const std::string tmp = path + ".tmp";
+  FILE* f = fopen(tmp.c_str(), "w");
+  if (!f) return false;
+  fprintf(f, "bbr-manifest 1\ncompiler %s\nimage %016" PRIx64 " %" PRIu64 " %" PRIx64 "\ncatalog %s\noptions %s\nshards %" PRIu64 " %" PRIu64 "\n", m.compiler.c_str(), m.imageHash, m.imageSize, m.base, m.catalog.c_str(), m.options.c_str(), m.nshards, m.nfuncs);
+  for (size_t k = 0; k < m.shards.size(); ++k) { const auto& s = m.shards[k]; fprintf(f, "shard %zu %u %u %s %" PRIu64 " %s\n", k, s.lo, s.hi, s.key.c_str(), s.size, s.sha.c_str()); }
+  if (!m.soSha.empty()) fprintf(f, "so %" PRIu64 " %s\n", m.soSize, m.soSha.c_str());
+  fprintf(f, "end\n");
+  const bool ok = fclose(f) == 0;
+  return ok && std::rename(tmp.c_str(), path.c_str()) == 0;
+}
+
+// False when the file is missing or not a manifest (`why` says which).
+bool readManifest(const std::string& path, Manifest& m, std::string& why) {
+  FILE* f = fopen(path.c_str(), "r");
+  if (!f) { why = "cannot be read"; return false; }
+  char a[96], b[96], c[96], line[512];
+  unsigned long long u1 = 0, u2 = 0, u3 = 0;
+  bool ok = fscanf(f, "bbr-manifest %95s", a) == 1 && !strcmp(a, "1");
+  ok = ok && fscanf(f, " compiler %95s", a) == 1; if (ok) m.compiler = a;
+  ok = ok && fscanf(f, " image %95s %llu %llx", a, &u2, &u3) == 3; if (ok) { m.imageHash = strtoull(a, nullptr, 16); m.imageSize = u2; m.base = u3; }
+  ok = ok && fscanf(f, " catalog %95s", a) == 1; if (ok) m.catalog = a;
+  ok = ok && fscanf(f, " options %95s", a) == 1; if (ok) m.options = a;
+  ok = ok && fscanf(f, " shards %llu %llu", &u1, &u2) == 2 && u1 >= 1 && u1 <= 100000; if (ok) { m.nshards = u1; m.nfuncs = u2; m.shards.resize(u1); }
+  for (size_t k = 0; ok && k < m.shards.size(); ++k) {
+    unsigned long long idx = 0, lo = 0, hi = 0, sz = 0;
+    ok = fscanf(f, " shard %llu %llu %llu %95s %llu %95s", &idx, &lo, &hi, a, &sz, b) == 6 && idx == k;
+    if (ok) { m.shards[k].lo = (uint32_t)lo; m.shards[k].hi = (uint32_t)hi; m.shards[k].key = a; m.shards[k].size = sz; m.shards[k].sha = b; }
+  }
+  if (ok && fscanf(f, " %15s", line) == 1 && !strcmp(line, "so")) { ok = fscanf(f, " %llu %95s", &u1, c) == 2; if (ok) { m.soSize = u1; m.soSha = c; } ok = ok && fscanf(f, " %15s", line) == 1; }
+  ok = ok && !strcmp(line, "end");
+  fclose(f);
+  if (!ok) why = "is not a bb-recomp build manifest (or is damaged)";
+  return ok;
 }
 } // namespace
 
@@ -617,6 +695,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
   lo.isKnownUnit = [&starts](uint64_t v) { return std::binary_search(starts.begin(), starts.end(), v); };
   lo.dirtyCheck = opt.dirtyCheck;
   if (!hookSites.empty()) lo.hookSites = &hookSites;
+  lo.stableHookRefs = true; // a unit names a site by its address, not by its place in the catalog (delta rebuild: the table object defines the symbols)
   lo.unitIndex = [&starts](uint64_t v) -> int64_t { auto it = std::lower_bound(starts.begin(), starts.end(), v); return it != starts.end() && *it == v ? it - starts.begin() : -1; };
 
   bbrStage("compile", "Recompiling");
@@ -625,26 +704,125 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
   std::vector<uint64_t> shardBytes(nshards, 0);
   for (unsigned k = 0; k < nshards; ++k) for (size_t j = bound[k]; j < bound[k + 1]; ++j) shardBytes[k] += funcs[todo[j]].end - funcs[todo[j]].start;
   const uint64_t imageHash = fnv1a(img.file);
-  // Resume: what a shard's code depends on besides its own function range (see saveShard).
+  uint64_t catalogHashV = 0;
+  { std::string e; if (!opt.variantPaths.empty() && !catalogHash(opt.variantPaths, catalogHashV, e)) { bbrError("%s", e.c_str()); return 1; } }
+  char catalogHex[20]; snprintf(catalogHex, sizeof catalogHex, "%016" PRIx64, catalogHashV);
+
+  // Resume: what a shard's code depends on. The global part is everything that is the same for all shards (the compiler version, not the tool's; the image; the options;
+  // the unit set, the granular functions and the function list, which every shard's direct calls and units are built from). The catalog is not in it: a shard's key
+  // has only the hook sites that can reach its code (below), so a changed catalog only invalidates the shards it touches.
   KeyHash globalKey;
   if (opt.resume && wantCode) {
     KeyHash& h = globalKey;
-    h.str(BBR_TOOL_VERSION); h.u64(img.base); h.u64(imageHash); h.u64(img.file.size());
+    h.str(BBR_COMPILER_VERSION); h.u64(img.base); h.u64(imageHash); h.u64(img.file.size());
     h.u64(opt.target.aarch64); h.u64(opt.target.opt); h.str(opt.target.cpu); h.str(opt.target.features);
     h.u64(opt.storeFlagsAtCalls | opt.calleeSaved << 1 | opt.dirtyCheck << 2 | opt.resumeEntries << 3); h.u64((uint64_t)opt.granular);
     h.u64(liftOpt.multiblock | liftOpt.tso << 1 | liftOpt.gapUnits << 2 | liftOpt.switchTables << 3 | liftOpt.passes << 4 | liftOpt.validate << 5 | liftOpt.granularAll << 6); h.str(liftOpt.host); h.u64(liftOpt.maxInst);
     h.u64(starts.size()); for (uint64_t v : starts) h.u64(v);
     h.u64(granular.size()); for (uint64_t v : granular) h.u64(v);
     h.u64(funcs.size()); for (const Func& f : funcs) { h.u64(f.start); h.u64(f.end); h.u64(f.kind); }
-    h.u64(catalog.hooks.size());
-    for (const HookDecl& d : catalog.hooks) { h.u64(d.vaddr); h.u64(d.len); h.u64(d.skip | d.regs << 1); h.u64(d.resume.size()); for (uint64_t r : d.resume) h.u64(r); }
     h.u64(nshards); h.u64(todo.size());
+    h.u64(hookSites.empty() ? 0 : 1); // (with or without any hook site the lowering takes other paths: the catalog having hooks at all is global)
   }
-  // Progress (--progress): work units are code bytes, a shard's lift+lower share is kLiftShare percent of its work (measured: 54 of 1638 CPU seconds), the rest is optimiser + code generator.
+  const std::string optionsKey = globalKey.hex();
+  // Per shard: the function range, the functions, and the hook sites (address, resume points) that lie in the code of the shard. That code is its functions plus
+  // whatever their units cover (a unit may run past its function); a site belongs to the shard when its address or one of its resume points is in that hull.
+  // Nothing else of the catalog enters a unit: the index of a site is not in the code (stableHookRefs), the length and flags only go to the table.
+  std::vector<std::string> keys(nshards);
+  if (opt.resume && wantCode) {
+    std::vector<uint64_t> hullLo(nshards, ~0ull), hullHi(nshards, 0);
+    std::vector<unsigned> shardOfPos(todo.size());
+    for (unsigned k = 0; k < nshards; ++k) for (size_t j = bound[k]; j < bound[k + 1]; ++j) {
+      shardOfPos[j] = k;
+      hullLo[k] = std::min(hullLo[k], funcs[todo[j]].start); hullHi[k] = std::max(hullHi[k], funcs[todo[j]].end);
+    }
+    for (const UnitInfo& u : pre) {
+      auto it = std::upper_bound(funcs.begin(), funcs.end(), u.entry, [](uint64_t v, const Func& f) { return v < f.start; });
+      if (it == funcs.begin()) continue;
+      const size_t fi = (it - 1) - funcs.begin();
+      auto tp = std::lower_bound(todo.begin(), todo.end(), fi);
+      if (tp == todo.end() || *tp != fi) continue;
+      const unsigned k = shardOfPos[tp - todo.begin()];
+      hullLo[k] = std::min(hullLo[k], u.entry); hullHi[k] = std::max(hullHi[k], std::max(u.end, u.entry + 1));
+    }
+    for (unsigned k = 0; k < nshards; ++k) {
+      KeyHash h = globalKey;
+      h.u64(k); h.u64(bound[k]); h.u64(bound[k + 1]);
+      for (size_t j = bound[k]; j < bound[k + 1]; ++j) h.u64(todo[j]);
+      auto in = [&](uint64_t v) { return v >= hullLo[k] && v < hullHi[k]; };
+      for (const auto& [va, hs] : hookSites) {
+        bool hit = in(va);
+        for (uint64_t r : hs.resume) hit = hit || in(r);
+        if (!hit) continue;
+        h.u64(va); h.u64(hs.resume.size()); for (uint64_t r : hs.resume) h.u64(r);
+      }
+      keys[k] = h.hex();
+    }
+  }
+  // The manifest of an earlier build (--manifest): used when it is of this image and compiler (docs/COMPILER.md, "Build manifest").
+  Manifest man;
+  bool haveManifest = false;
+  if (!opt.manifestIn.empty() && wantCode) {
+    std::string why;
+    if (!readManifest(opt.manifestIn, man, why)) say("manifest %s: %s, ignored\n", opt.manifestIn.c_str(), why.c_str());
+    else if (man.compiler != BBR_COMPILER_VERSION) say("manifest: made by compiler version %s, this is %s: ignored\n", man.compiler.c_str(), BBR_COMPILER_VERSION);
+    else if (man.imageHash != imageHash || man.imageSize != img.file.size() || man.base != img.base) say("manifest: it is for another game image: ignored\n");
+    else if (man.nshards != nshards || man.nfuncs != todo.size()) say("manifest: %" PRIu64 " shards of %" PRIu64 " functions, this build has %u of %zu: ignored\n", man.nshards, man.nfuncs, nshards, todo.size());
+    else if (!opt.resume) say("manifest: needs --resume (the kept shards): ignored\n");
+    else haveManifest = true;
+  }
+  // Which shards are kept from the earlier run, decided before any work starts (so the progress and the ETA count only what will be built): the key and the size of
+  // the object must be those of the .stat file; where the manifest knows the shard (same key), the object's SHA-256 must be the manifest's too.
+  std::vector<uint8_t> keep(nshards, 0);
+  std::vector<std::string> shardSha(nshards);
+  unsigned reusedN = 0, hashRejected = 0;
+  std::vector<std::string> manifestNotes;
+  std::vector<unsigned> shardMismatch; // rebuilt shards whose object differs from the manifest's although the key is the same
+  std::vector<uint8_t> manifestKnows(nshards, 0); // the manifest has this shard with this key: its object hash is what we must get
+  if (opt.resume && wantCode) {
+    std::atomic<unsigned> nk {0};
+    std::mutex mu;
+    auto check = [&] {
+      for (;;) {
+        const unsigned k = nk++;
+        if (k >= nshards) break;
+        const std::string path = shardPath(opt.objPath.empty() ? opt.soPath + ".o" : opt.objPath, nshards, k, ".o");
+        const bool known = haveManifest && man.shards[k].key == keys[k];
+        ShardStats tmp;
+        if (!loadShard(path, keys[k], tmp)) continue;
+        if (known || opt.manifestOut.size()) {
+          const std::string sha = sha256OfFile(path);
+          if (known && sha != man.shards[k].sha) {
+            std::lock_guard<std::mutex> g(mu);
+            ++hashRejected;
+            manifestNotes.push_back("shard " + std::to_string(k) + ": the kept object is not the one the manifest lists: rebuilt");
+            std::remove((path + ".stat").c_str());
+            continue;
+          }
+          tmp.sha = sha;
+        }
+        stats[k] = std::move(tmp); keep[k] = 1; shardSha[k] = stats[k].sha;
+      }
+    };
+    std::vector<WorkerThread> th;
+    for (unsigned i = 0; i < std::max(1u, std::min<unsigned>(plan.jobs, nshards)); ++i) th.emplace_back(check);
+    for (auto& t : th) t.join();
+    for (unsigned k = 0; k < nshards; ++k) if (keep[k]) { objFiles[k] = shardPath(opt.objPath.empty() ? opt.soPath + ".o" : opt.objPath, nshards, k, ".o"); ++reusedN; }
+    if (haveManifest) for (unsigned k = 0; k < nshards; ++k) manifestKnows[k] = man.shards[k].key == keys[k];
+  }
+  for (auto& n : manifestNotes) say("manifest: %s\n", n.c_str());
+  uint64_t rebuildBytes = 0;
+  for (unsigned k = 0; k < nshards; ++k) if (!keep[k]) rebuildBytes += shardBytes[k];
+  if (opt.resume && wantCode) {
+    say("reuse: %u of %u shards kept from an earlier run, %u to recompile (%.1f of %.1f MB of x86 code)%s\n", reusedN, nshards, nshards - reusedN, rebuildBytes / 1e6, totalBytes / 1e6,
+        haveManifest ? ", checked against the manifest" : "");
+    char st[96]; snprintf(st, sizeof st, "Recompiling %u of %u shards (%u reused)", nshards - reusedN, nshards, reusedN);
+    bbrStatus(st);
+  }
+  // Progress (--progress): work units are code bytes of the shards that are built (a reused shard costs nothing), a shard's lift+lower share is kLiftShare percent of its work (measured: 54 of 1638 CPU seconds), the rest is optimiser + code generator.
   constexpr uint64_t kLiftShare = 3;
-  const uint64_t workTotal = totalBytes * 100;
+  const uint64_t workTotal = rebuildBytes * 100;
   std::atomic<uint64_t> workDone {0};
-  std::atomic<unsigned> reused {0};
   bbrWork("compile", 0, workTotal);
   std::atomic<unsigned> next {0};
   std::atomic<bool> failed {false};
@@ -658,16 +836,12 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     for (;;) {
       const unsigned k = next++;
       if (k >= nshards || bbrStopRequested()) break;
+      if (keep[k]) continue;
       bbrProgress(k, nshards);
       ShardStats& st = stats[k];
       const std::string path = wantCode ? shardPath(opt.objPath.empty() ? opt.soPath + ".o" : opt.objPath, nshards, k, ".o") : std::string();
-      std::string key;
+      const std::string& key = keys[k];
       if (opt.resume && wantCode) {
-        KeyHash h = globalKey;
-        h.u64(k); h.u64(bound[k]); h.u64(bound[k + 1]);
-        for (size_t j = bound[k]; j < bound[k + 1]; ++j) h.u64(todo[j]);
-        key = h.hex();
-        if (loadShard(path, key, st)) { objFiles[k] = path; ++reused; workDone += shardBytes[k] * 100; bbrWork("compile", workDone, workTotal); continue; }
         st = ShardStats();
         std::remove((path + ".stat").c_str()); // (a crash must not leave an old .stat next to a new object)
       }
@@ -714,6 +888,12 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
         st.codegen = since(t);
         st.objBytes = obj.size();
         st.textBytes = textSize(obj);
+        if (opt.resume || !opt.manifestOut.empty()) st.sha = sha256OfBytes(obj);
+        if (manifestKnows[k] && st.sha != man.shards[k].sha) {
+          std::lock_guard<std::mutex> g(errMu);
+          shardMismatch.push_back(k);
+          fprintf(stderr, "bb-recomp: MANIFEST MISMATCH: shard %u was rebuilt with the key the manifest has (same inputs), but its object differs from the manifest's (%s, not %s)\n", k, st.sha.substr(0, 16).c_str(), man.shards[k].sha.substr(0, 16).c_str());
+        }
         // written under a temporary name and renamed: a finished object is never a half-written one (--resume trusts it)
         const std::string tmp = path + ".tmp";
         FILE* f = fopen(tmp.c_str(), "wb");
@@ -734,7 +914,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
   for (auto& t : th) t.join();
   if (bbrStopRequested()) return 128 + g_bbrStopSignal.load();
   if (failed) return 1;
-  if (wantCode) for (unsigned k = 0; k < nshards; ++k) { opt.workFiles.push_back(objFiles[k]); if (opt.resume) opt.workFiles.push_back(objFiles[k] + ".stat"); }
+  if (wantCode) for (unsigned k = 0; k < nshards; ++k) { opt.workFiles.push_back(objFiles[k]); if (opt.resume) opt.workFiles.push_back(objFiles[k] + ".stat"); shardSha[k] = stats[k].sha; }
 
   // Totals.
   ShardStats tot;
@@ -757,7 +937,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
 
   // Hook sites that got a slot test in at least one unit.
   std::vector<uint8_t> hookCompiled(catalog.hooks.size(), 0);
-  for (auto& st : stats) for (uint32_t i : st.hookSeen) if (i < hookCompiled.size()) hookCompiled[i] = 1;
+  for (auto& st : stats) for (uint64_t v : st.hookSeen) { auto hs = hookSites.find(v); if (hs != hookSites.end() && hs->second.index < hookCompiled.size()) hookCompiled[hs->second.index] = 1; }
 
   // Variants: the functions the catalog's patch groups touch, compiled again from the patched bytes.
   VariantResult vres;
@@ -776,7 +956,6 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     for (auto& s2 : stats) trapSorted.insert(trapSorted.end(), s2.trapVaddrs.begin(), s2.trapVaddrs.end());
     std::sort(trapSorted.begin(), trapSorted.end());
     vj.trapUnits = &trapSorted;
-    for (auto& s2 : stats) for (uint32_t i : s2.hookSeen) (void)i;
     const bool variantsOk = compileVariants(vj, vres);
     if (bbrStopRequested()) return 128 + g_bbrStopSignal.load();
     if (!variantsOk) { bbrError("compiling the variants failed"); return 1; }
@@ -887,6 +1066,36 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     bbrWork("link", 3, 3);
   }
 
+  // The manifest: checks of the library against the one the manifest has, and the manifest of this build.
+  std::string soSha; uint64_t soShaSize = 0;
+  std::string manifestVerdict;
+  if (wantCode && !opt.soPath.empty() && (haveManifest || !opt.manifestOut.empty())) soSha = sha256OfFile(opt.soPath, &soShaSize);
+  if (haveManifest && !man.soSha.empty() && !soSha.empty()) {
+    bool allKnown = shardMismatch.empty();
+    for (unsigned k = 0; k < nshards; ++k) allKnown = allKnown && manifestKnows[k];
+    if (man.catalog != catalogHex) manifestVerdict = "the manifest is of another catalog: the library hash was not checked";
+    else if (man.options != optionsKey) manifestVerdict = "the manifest is of other options: the library hash was not checked";
+    else if (!allKnown) manifestVerdict = "some shards are not the manifest's: the library hash was not checked";
+    else if (soSha != man.soSha) {
+      manifestVerdict = "MANIFEST MISMATCH: the library " + soSha + " is not the manifest's " + man.soSha + " although every shard matches: the variants, table, helpers or link differ from the build that wrote the manifest";
+      fprintf(stderr, "bb-recomp: %s\n", manifestVerdict.c_str());
+    } else manifestVerdict = "the library is the one the manifest lists (SHA-256 verified)";
+  } else if (haveManifest && !soSha.empty()) manifestVerdict = "the manifest has no library hash";
+  if (!shardMismatch.empty()) manifestVerdict += (manifestVerdict.empty() ? "" : "; ") + std::to_string(shardMismatch.size()) + " rebuilt shards differ from the manifest's objects (MANIFEST MISMATCH, see above)";
+  if (!opt.manifestOut.empty() && wantCode) {
+    if (!opt.resume) fprintf(stderr, "bb-recomp: --manifest-out needs --resume: no manifest written\n");
+    else {
+      Manifest o;
+      o.compiler = BBR_COMPILER_VERSION; o.imageHash = imageHash; o.imageSize = img.file.size(); o.base = img.base; o.catalog = catalogHex; o.options = optionsKey;
+      o.nshards = nshards; o.nfuncs = todo.size(); o.shards.resize(nshards);
+      for (unsigned k = 0; k < nshards; ++k) { o.shards[k].lo = (uint32_t)bound[k]; o.shards[k].hi = (uint32_t)bound[k + 1]; o.shards[k].key = keys[k]; o.shards[k].size = stats[k].objBytes; o.shards[k].sha = shardSha[k]; }
+      o.soSha = soSha; o.soSize = soShaSize;
+      if (!writeManifest(opt.manifestOut, o)) fprintf(stderr, "bb-recomp: cannot write %s\n", opt.manifestOut.c_str());
+      else say("manifest written to %s (%u shards%s)\n", opt.manifestOut.c_str(), nshards, soSha.empty() ? "" : ", with the library hash");
+    }
+  }
+  if (!manifestVerdict.empty()) say("manifest: %s\n", manifestVerdict.c_str());
+
   const double wall = since(t0);
   long rssKb = 0;
 #ifndef _WIN32
@@ -896,7 +1105,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
   if (plan.availGB > 0)
     say("memory plan: %.1f GB available, budget %.1f GB (%.0f%%): %u jobs, %u shards of %.2f MB, estimated peak %.1f GB%s\n", plan.availGB, plan.budgetGB, opt.memFraction * 100, jobs, nshards,
         plan.shardMB, plan.estPeakGB, plan.limited ? " (reduced to fit)" : "");
-  if (opt.resume && wantCode) say("resume: %u of %u shards reused from an earlier run\n", reused.load(), nshards);
+  if (opt.resume && wantCode) say("resume: reused %u of %u shards from an earlier run\n", reusedN, nshards);
   say("functions %" PRIu64 " (%.1f MB), units %" PRIu64 " (lift failures %" PRIu64 "), IR ops lowered %" PRIu64 "\n", tot.funcs, totalBytes / 1e6, tot.units, tot.liftFailed, tot.irOps);
   say("units with bbr_trap (unsupported ops): %" PRIu64 " (%.2f%%), trap sites %" PRIu64 "\n", tot.unitsWithTrap, tot.units ? 100.0 * tot.unitsWithTrap / tot.units : 0.0, tot.trapSites);
   say("indirect jmps %" PRIu64 ": %" PRIu64 " jump tables (%" PRIu64 " bounded + %" PRIu64 " scanned, %.2f MB of tables), %" PRIu64 " jmp [mem], %" PRIu64 " jmp reg tail calls, %" PRIu64 " table-like unresolved; %" PRIu64 " lowered as switch (%" PRIu64 " cases)\n",

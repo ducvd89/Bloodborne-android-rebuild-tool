@@ -52,6 +52,7 @@ class Jit {
   std::unique_ptr<llvm::orc::LLJIT> jit;
   std::unique_ptr<llvm::TargetMachine> tm;
   std::set<uint64_t> known;
+  std::set<uint64_t> hookSyms;          // sites whose symbol bbr_hook_slot_<vaddr> (= &g_hookSlot[index]) is defined (the units name sites that way, like the phone build)
   std::map<uint64_t, Fn> fns;
   std::set<std::string> unsupported;
   std::string liftFailure;

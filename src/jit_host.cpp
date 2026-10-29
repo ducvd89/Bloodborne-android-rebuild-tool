@@ -98,6 +98,15 @@ Jit::Jit(const ElfImage& img, const LiftOptions& lo, const TargetSpec& ts) : lif
 
 bool Jit::compile(uint64_t from, uint64_t hi) {
   callExits = 0;
+  if (hookSites) {
+    orc::SymbolMap sm;
+    for (auto& [v, h] : *hookSites) {
+      if (!hookSyms.insert(v).second) continue;
+      char nm[48]; snprintf(nm, sizeof nm, "bbr_hook_slot_%llx", (unsigned long long)v);
+      sm[jit->mangleAndIntern(nm)] = {orc::ExecutorAddr::fromPtr((void*)&g_hookSlot[h.index]), JITSymbolFlags::Exported};
+    }
+    if (!sm.empty()) cantFail(jit->getMainJITDylib().define(orc::absoluteSymbols(std::move(sm))));
+  }
   struct Sink : UnitSink {
     Jit& j; std::unique_ptr<LLVMContext> ctx; std::unique_ptr<Module> mod; std::unique_ptr<UnitLowerer> ul;
     std::vector<std::string> unsup; std::vector<uint64_t> entries;
@@ -108,6 +117,7 @@ bool Jit::compile(uint64_t from, uint64_t hi) {
       lo.aarch64 = false; lo.hiddenUnits = false; lo.calleeSaved = j.calleeSaved; lo.resumeEntries = j.resumeEntries; lo.storeFlagsAtCalls = true;
       lo.isKnownUnit = [](uint64_t) { return false; };
       lo.hookSites = j.hookSites;
+      lo.stableHookRefs = true;
       ul.reset(new UnitLowerer(*ctx, *mod, lo));
     }
     void unit(uint64_t entry, bool, const void* ir, const UnitMeta& meta) override {

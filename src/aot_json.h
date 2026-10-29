@@ -22,10 +22,11 @@ struct GameMeta { std::string titleId = "?", version = "?", title = "?", content
 // sce_sys/param.sfo of a game folder (TITLE_ID, APP_VER, TITLE, CONTENT_ID); "" when read, else the reason.
 std::string readGameMeta(const std::string& gameDir, GameMeta& out);
 
+// catalogHash (16 hex digits, docs/COMPILER.md "Catalog hash") and the compiler version go into the json: the app tells a library built from an older catalog.
 // The json next to a .so: "" when written, else the reason.
-std::string writeAotJson(const std::string& jsonPath, const GameMeta& meta, const SoInfo& so, uint64_t imageSize);
+std::string writeAotJson(const std::string& jsonPath, const GameMeta& meta, const SoInfo& so, uint64_t imageSize, const std::string& catalogHash = "");
 // readSo + the checks of player mode (ABI version, image hash) + writes the json; "" when ok, else the reason. `so` gets the .so's facts.
-std::string checkAndWriteAotJson(const std::string& soPath, const std::string& bootPath, const GameMeta& meta, const std::string& jsonPath, SoInfo& so, uint64_t& imageSize);
+std::string checkAndWriteAotJson(const std::string& soPath, const std::string& bootPath, const GameMeta& meta, const std::string& jsonPath, SoInfo& so, uint64_t& imageSize, const std::string& catalogHash = "");
 
 std::string isoNow();
 std::string hex16(uint64_t v);

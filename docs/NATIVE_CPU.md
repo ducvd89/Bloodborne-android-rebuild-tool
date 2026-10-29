@@ -274,14 +274,14 @@ BBR-PROGRESS <stage> <done> <total>
 | `scan` | 0/1 when it starts, 1/1 when the image, the function list and the landing pads are known | 1 % |
 | `discover` | functions examined of all (the search for code without an FDE; it has later rounds that report nothing) | 2 % |
 | `lift` | code bytes lifted of the code to compile (the pass that learns the unit set) | 2 % |
-| `compile` | work done of the whole compile, in code bytes x 100 (about 3 % of a shard's work is lifting, the rest optimiser and code generator; a finished shard counts all of it, a reused one too) | 93 % |
+| `compile` | work done of the whole compile, in code bytes x 100 (about 3 % of a shard's work is lifting, the rest optimiser and code generator; a finished shard counts all of it; shards kept by `--resume` are decided before the stage starts and are not in `total` at all, so a delta build's `total` is only the code bytes x 100 of the shards to rebuild, and the log says `reuse: N of 64 shards kept ...`) | 93 % |
 | `variants` | functions with variants done of all | 1 % |
 | `link` | 0/3 the unit table, 1/3 the x87 helpers, 2/3 the link, 3/3 done (lines of a stage that come within a quarter of a second of the last are left out, the first and the last of every stage always appear) | 1 % |
 | `json` | 0/1, 1/1 | - |
 | `done` | 1/1, printed just before `BBR-DONE 0` | - |
 
 `done` only grows within a stage. A stage can be absent (no `variants` without a catalog). The shares are from the CPU time of a PC build (7 s of analysis, 1638 s of compile, a few serial seconds for variants and link); they hold on the phone too, so one
-bar can use these weights and take the ETA from the finished fraction over time (the `compile` lines come about every 250 ms on a PC, about 140 in a whole build).
+bar can use these weights (a delta build: the `lift`, `variants` and `link` weights stay, the `compile` share shrinks with the rebuilt fraction of the code) and take the ETA from the finished fraction over time (the `compile` lines come about every 250 ms on a PC, about 140 in a whole build).
 
 | Exit status | |
 |---|---|
@@ -295,7 +295,7 @@ bar can use these weights and take the ETA from the finished fraction over time 
 tool ends itself anyway. Finished shards stay in the work folder; nothing half written is left that a restart would trust (objects are written under a temporary name and renamed, the `.stat` file comes last).
 
 **Resume.** With `--resume` every finished shard leaves `libbbaot.so.o.NNN.o` and `libbbaot.so.o.NNN.o.stat` in the work folder. Run the same command again in the same folder (after a stop, a kill, a reboot) and the tool reuses every shard whose `.stat`
-key still matches (a hash over the tool version, the lift base, the image, every option that changes the code, the unit set, the function list, the hook declarations and the shard's functions) and whose object has the recorded size. The scan, discovery and unit-set passes, the
+key still matches (a hash over the compiler version, the lift base, the image, every option that changes the code, the unit set, the function list, the shard's functions and the hook sites in its code; not the rest of the catalog, so a changed catalog only rebuilds the shards it reaches: docs/COMPILER.md, "Delta rebuild") and whose object has the recorded size (`--manifest` adds the object hash). `--clean-work` deletes what the next delta build needs: leave it off to keep the delta. The scan, discovery and unit-set passes, the
 variants, the table, the link and the json run again (seconds on a PC, well under a minute on a phone). The library is byte-identical to an uninterrupted build (checked: an interrupted and resumed build equals a fresh one). Start another game version, another tool version or other
 options in an empty work folder, or delete the old one. A `libbbaot.so` that exists after a kill may be half linked: only `BBR-DONE 0` makes it a result.
 

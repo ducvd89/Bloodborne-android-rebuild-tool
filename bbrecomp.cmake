@@ -36,7 +36,7 @@ set(BBR_HELPERS "${BB_RECOMP_DIR}/helpers")
 # The x87 helpers (plain C, one translation unit) are linked into every tool: the in-process JIT of the test tools calls them
 # directly. The same file is compiled again for the target and linked into the generated .so (compile.cpp).
 set_source_files_properties("${BBR_HELPERS}/bbr_x87_all.c" PROPERTIES LANGUAGE C COMPILE_OPTIONS "-O2;-fvisibility=hidden;-fno-stack-protector;-ffp-contract=off")
-set(BBR_LLVM_SRCS "${BBR}/lower_llvm.cpp" "${BBR}/lower_ops.cpp" "${BBR}/lower_vector.cpp" "${BBR}/codegen.cpp" "${BBR}/compile.cpp" "${BBR}/bundle.cpp" "${BBR}/variant_compile.cpp")
+set(BBR_LLVM_SRCS "${BBR}/lower_llvm.cpp" "${BBR}/lower_ops.cpp" "${BBR}/lower_vector.cpp" "${BBR}/codegen.cpp" "${BBR}/compile.cpp" "${BBR}/bundle.cpp" "${BBR}/variant_compile.cpp" "${BBR}/sha256.cpp")
 add_executable(bb-recomp "${BBR}/main.cpp" ${BBR_COMMON} "${BBR}/census.cpp")
 target_include_directories(bb-recomp PRIVATE
   "${CMAKE_SOURCE_DIR}/FEXCore/Source" "${CMAKE_SOURCE_DIR}/FEXCore/include" "${CMAKE_BINARY_DIR}/include" "${BBR}" "${BBR_HELPERS}")
@@ -146,7 +146,7 @@ if(BB_RECOMP_LLVM AND BB_RECOMP_PLAYER)
     list(REMOVE_ITEM BBR_PREPARE_SRCS "${BBR_PREPARE}/io.cpp")
     list(APPEND BBR_PREPARE_SRCS "${BB_RECOMP_DIR}/windows/io_win.cpp")
   endif()
-  target_sources(bb-recomp PRIVATE ${BBR_PREPARE_SRCS} "${BBR}/player.cpp" "${BBR}/aot_json.cpp" "${BBR}/pkgs.cpp" "${BBR}/proc.cpp" "${BBR}/pkgverify.cpp" "${BBR}/sha256.cpp")
+  target_sources(bb-recomp PRIVATE ${BBR_PREPARE_SRCS} "${BBR}/player.cpp" "${BBR}/aot_json.cpp" "${BBR}/pkgs.cpp" "${BBR}/proc.cpp" "${BBR}/pkgverify.cpp")
   set_source_files_properties("${BBR_PREPARE}/bb_prepare.cpp" PROPERTIES COMPILE_DEFINITIONS "main=bb_prepare_main")
   # Their headers (hash.h, io.h ...) have generic names: they are found by quoted include only (-iquote), never as <io.h> (Windows has one).
   set_source_files_properties("${BBR}/player.cpp" "${BBR}/aot_json.cpp" "${BBR}/pkgs.cpp" PROPERTIES COMPILE_OPTIONS "-iquote;${BBR_PREPARE}")

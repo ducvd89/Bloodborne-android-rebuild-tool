@@ -11,6 +11,7 @@
 #include <set>
 #include <string_view>
 #include <cstdio>
+#include <cinttypes>
 
 using namespace llvm;
 
@@ -456,7 +457,17 @@ void Lower::fillAll() {
 // continues from there, while the fall-through path goes on with the lazy flag descriptor.
 void Lower::emitHookSite(const HookSite& hs) {
   materialize();
-  auto* slotAddr = B.CreateConstInBoundsGEP1_64(Ptr, m.hookSlotVar, hs.index);
+  Value* slotAddr;
+  if (m.O.stableHookRefs) {
+    char nm[48]; snprintf(nm, sizeof nm, "bbr_hook_slot_%" PRIx64, hs.vaddr);
+    auto* g = m.M.getNamedGlobal(nm);
+    if (!g) {
+      g = new GlobalVariable(m.M, m.Ptr, false, GlobalValue::ExternalLinkage, nullptr, nm);
+      g->setDSOLocal(true);
+      g->setVisibility(GlobalValue::HiddenVisibility);
+    }
+    slotAddr = g;
+  } else slotAddr = B.CreateConstInBoundsGEP1_64(Ptr, m.hookSlotVar, hs.index);
   auto* slot = B.CreateAlignedLoad(Ptr, slotAddr, Align(8), "hslot");
   slot->setAtomic(AtomicOrdering::Monotonic);
   auto* hookBB = newBB("hook");
@@ -467,7 +478,10 @@ void Lower::emitHookSite(const HookSite& hs) {
   const uint64_t savedDirty = dirty;
   spill(true);
   B.CreateAlignedStore(reloc(m.O.liftBase + hs.vaddr), gep(offsetof(Core::CPUState, rip)), Align(8));
-  Value* act = B.CreateCall(FunctionType::get(I64, {Ptr, I64}, false), slot, {S, c64(hs.index)});
+  Value* siteIndex = m.O.stableHookRefs
+      ? B.CreateLShr(B.CreateSub(B.CreatePtrToInt(slotAddr, I64), B.CreatePtrToInt(m.hookSlotVar, I64)), c64(3)) // (&bbr_hook_slot_<site> - &bbr_hook_slot) / 8
+      : (Value*)c64(hs.index);
+  Value* act = B.CreateCall(FunctionType::get(I64, {Ptr, I64}, false), slot, {S, siteIndex});
   fillAll();
   dirty = 0;
   auto* retBB = newBB("hret");
@@ -501,7 +515,7 @@ void Lower::emitHookSite(const HookSite& hs) {
   B.SetInsertPoint(contBB);
   dirty = savedDirty;
   ++res->hookSites;
-  res->hookIdx.push_back(hs.index);
+  res->hookVaddr.push_back(hs.vaddr);
 }
 
 // ----------------------------------------------------------------------------------- control flow ----

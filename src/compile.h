@@ -44,6 +44,8 @@ struct CompileOptions {
   std::vector<std::string> variantPaths; // variant catalogs (files or directories of *.txt): patch variants and native hook sites (docs/RECOMP_ABI.md)
   bool variantReport = false;     // list every variant and hook site in the summary
   bool resume = false;            // --resume: write a .stat file next to every shard object and reuse the shards a restart finds finished for the same inputs
+  std::string manifestIn;         // --manifest: a build manifest of an earlier build (same image and compiler version) that says what the kept shards and the library must be
+  std::string manifestOut;        // --manifest-out: write the manifest of this build (shard keys and object hashes, the library hash)
   mutable std::vector<std::string> workFiles; // out: the files this compile made next to the .so (objects, .stat files, the stub and helper objects): --clean-work deletes them
 };
 

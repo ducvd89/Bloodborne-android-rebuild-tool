@@ -21,6 +21,7 @@
 #include "progress.h"
 #include "ps4.h"
 #include "version.h"
+#include "variants.h"
 
 #include <llvm/Config/llvm-config.h>
 
@@ -326,7 +327,7 @@ int playerMain(int argc, char** argv) {
     if (xec || !fs::is_regular_file(extra, xec)) { cleanup(); die("--extra-entries: cannot read " + extraArg); }
     args.push_back("--extra-entries"); args.push_back(extra.string());
   }
-  std::string variantNote = "none (this build has no variant support)";
+  std::string variantNote = "none (this build has no variant support)", catalogHashHex;
 #ifdef BBR_HAVE_VARIANTS
   {
     std::string vdir = variantsArg;
@@ -340,6 +341,7 @@ int playerMain(int argc, char** argv) {
       }
       if (!vdir.empty() && fs::is_directory(vdir)) { args.push_back("--variants"); args.push_back(fs::absolute(vdir).string()); variantNote = vdir; }
       else variantNote = "none found";
+      { uint64_t ch = 0; std::string ce; catalogHash(vdir.empty() ? std::vector<std::string>() : std::vector<std::string>{vdir}, ch, ce); char hx[20]; snprintf(hx, sizeof hx, "%016" PRIx64, ch); catalogHashHex = hx; }
     }
   }
 #else
@@ -383,7 +385,7 @@ int playerMain(int argc, char** argv) {
   fs::rename(work / "libbbaot.so", soOut, ec);
   if (ec) { ec.clear(); fs::copy_file(work / "libbbaot.so", soOut, fs::copy_options::overwrite_existing, ec); }
   if (ec) { cleanup(); die("cannot write " + soOut.string() + ": " + ec.message()); }
-  { const std::string e = writeAotJson(jsonOut.string(), meta, so, imageSize); if (!e.empty()) { cleanup(); die(e); } }
+  { const std::string e = writeAotJson(jsonOut.string(), meta, so, imageSize, catalogHashHex); if (!e.empty()) { cleanup(); die(e); } }
   {
     std::ofstream o(out / "bb-recomp.log", std::ios::binary);
     o << "bb-recomp " << BBR_TOOL_VERSION << " (LLVM " << LLVM_VERSION_STRING << "), " << isoNow() << "\n" << stats;

@@ -86,6 +86,9 @@ static void usage() {
         "  --resume-entries     every call-return block is also an entry of its unit (resume flag in the guest state)\n"
         "  --variants <file|dir>   a variant catalog (variants/*.txt; repeatable): patch groups compiled as variants, native hook sites\n"
         "  --variant-report     list every variant and hook site in the summary\n"
+        "  --print-catalog-hash print the hash of the --variants catalogs (16 hex digits; libbbaot.json catalog_hash) and stop\n"
+        "  --manifest <file>    build manifest of an earlier build of this image (needs --resume): kept shards must match its object hashes, the library is checked against it\n"
+        "  --manifest-out <file>  write the manifest of this build (needs --resume): shard keys, object and library SHA-256\n"
         "  --no-callee-saved    reload rbx, rbp, r12-r15 after calls too (default: the SysV callee-saved set is trusted)\n"
         "  --ndk <dir>          Android NDK for --so\n"
         "  --bundle-dir <dir>   self-contained build: the bundle directory (default: <exe>/../share/bb-recomp, if present)\n"
@@ -166,7 +169,7 @@ int recompMain(int argc, char** argv) {
 
 static int recompRun(int argc, char** argv) {
   std::string elf = "out/eboot.elf", funcsFile, dumpArg, bootFile, prxDir, extraFile, gameDir, jsonFile;
-  bool elfSet = false, baseSet = false, resume = false, cleanWork = false;
+  bool elfSet = false, baseSet = false, resume = false, cleanWork = false, printCatalogHash = false;
   uint64_t base = kDefaultLiftBase;  // see elf_image.h
   bool scanOnly = false, nice = true, dump = false, noSecondary = false, noDiscovery = false;
   CensusOptions co;
@@ -244,6 +247,9 @@ static int recompRun(int argc, char** argv) {
     else if (is("--no-callee-saved")) cc.calleeSaved = false;
     else if (is("--variants")) cc.variantPaths.push_back(arg());
     else if (is("--variant-report")) cc.variantReport = true;
+    else if (is("--manifest")) cc.manifestIn = arg();
+    else if (is("--manifest-out")) cc.manifestOut = arg();
+    else if (is("--print-catalog-hash")) printCatalogHash = true;
     else if (is("--ndk")) cc.ndk = arg();
     else if (is("--bundle-dir")) cc.bundleDir = arg();
     else if (is("--helpers-dir")) cc.helpersDir = arg();
@@ -252,6 +258,15 @@ static int recompRun(int argc, char** argv) {
 #endif
     else usageExit();
   }
+#ifdef BB_RECOMP_LLVM
+  if (printCatalogHash) {
+    // The hash of the catalogs given with --variants (docs/COMPILER.md, "Catalog hash"): 16 hex digits.
+    uint64_t h = 0; std::string e;
+    if (!catalogHash(cc.variantPaths, h, e)) { bbrError("%s", e.c_str()); return 1; }
+    printf("%016" PRIx64 "\n", h);
+    return 0;
+  }
+#endif
   co.jobs = std::min(co.jobs, 22u); // 2 of 24 cores stay free on the dev PC
 #ifndef _WIN32
   if (nice) setpriority(PRIO_PROCESS, 0, 19);
@@ -365,7 +380,11 @@ static int recompRun(int argc, char** argv) {
       std::string js = jsonFile;
       if (js.empty()) { js = cc.soPath; if (js.size() > 3 && js.compare(js.size() - 3, 3, ".so") == 0) js.resize(js.size() - 3); js += ".json"; }
       std::string e = readGameMeta(gameDir, meta);
-      if (e.empty()) e = checkAndWriteAotJson(cc.soPath, bootFile, meta, js, so, imageSize);
+      if (e.empty()) {
+        uint64_t chash = 0; std::string ce; catalogHash(cc.variantPaths, chash, ce);
+        char hx[20]; snprintf(hx, sizeof hx, "%016" PRIx64, chash);
+        e = checkAndWriteAotJson(cc.soPath, bootFile, meta, js, so, imageSize, hx);
+      }
       if (!e.empty()) { bbrError("%s", e.c_str()); rc = 1; }
       else {
         printf("%s: %s %s, version %s, ABI version %u, %" PRIu64 " units in %" PRIu64 " functions, image hash %s, %.2f MB\n", js.c_str(), meta.titleId.c_str(), meta.title.c_str(), meta.version.c_str(), so.abiVersion, so.unitCount, so.funcCount, hex16(so.imageHash).c_str(), so.size / 1048576.0);

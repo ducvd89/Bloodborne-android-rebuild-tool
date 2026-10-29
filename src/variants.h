@@ -36,6 +36,8 @@ struct Catalog {
 // Appends the catalog in `text` (named `name` in messages). False and `err` on a syntax error.
 bool parseCatalog(const std::string& text, const std::string& name, Catalog& out, std::string& err);
 // Reads the files (a directory: every *.txt in it). Sorts and merges the hook declarations.
+// The catalog hash: FNV-1a 64 over the catalog files (docs/COMPILER.md, "Catalog hash").
+bool catalogHash(const std::vector<std::string>& paths, uint64_t& hash, std::string& err);
 bool loadCatalogs(const std::vector<std::string>& paths, Catalog& out, std::string& err);
 
 // What the variant compile leaves for the table (docs/RECOMP_ABI.md, "Variants"): one VFunc per (function, set of groups).

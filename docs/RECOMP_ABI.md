@@ -157,6 +157,7 @@ A catalog `hook <vaddr> <len> <snap|regs> [skip] [resume=a,b,...]` line declares
   The flags are put into the state's per-unit flag cells before the test and are not touched by the callback: the fall-through path continues with the lazy flag descriptor, the jump path from the cells.
   A resume address that is no block entry gets a block of its own (the block is split there). A jump to an address that is not a resume point of the site goes through `bbr_dispatch_tail` (a jump
   into the middle of another unit's code then runs on the fallback). Resume addresses of a site that are not in the unit are ignored.
+- the units name a site by the hidden symbol `bbr_hook_slot_<hex vaddr>` that the table object defines as `&bbr_hook_slot[k]`; `k` passed to the callback is `(&bbr_hook_slot_<site> - &bbr_hook_slot) / 8`, so no unit depends on the catalog order (docs/COMPILER.md, "Delta rebuild");
 - exports `bbr_hook_sites[]`, `bbr_hook_count`: `{ u64 vaddr; u32 len, flags, resume_first, resume_count; }` sorted by vaddr (flags: 1 the site was compiled into at least one unit, 2 `skip`, 4 kind `regs`),
   `bbr_hook_resume[]` (u64), and the writable `bbr_hook_slot[]` (all null at load; the runtime stores a function pointer).
 

@@ -512,6 +512,17 @@ std::string runHookTest(int opt) {
     if (!(e = runHookCase(hr, opt, st, true)).empty()) return "FAIL 1b: " + e;
     if (!(e = expect("1b slot: rax (rbx edited by the hook, then add 1)", st.gregs[0], 106)).empty() || g_hookCalls != 1) return e + " (hook calls " + std::to_string(g_hookCalls) + ")";
   }
+  // 1c. The index the callback gets is the site's (units name a site by its address and derive the index from its slot; two sites with indices 3 and 7):
+  //    mov rbx, 0 ; H1: add rbx, 1 ; H2: add rbx, 1 ; mov rax, rbx ; hlt     (the hook adds 100 * k)
+  {
+    HookRun hr; hr.code = {0x48, 0xc7, 0xc3, 0, 0, 0, 0,  0x48, 0x83, 0xc3, 1,  0x48, 0x83, 0xc3, 1,  0x48, 0x89, 0xd8,  0xf4};
+    HookSite a1, a2; a1.vaddr = CodeBase + 7; a1.index = 3; a2.vaddr = CodeBase + 11; a2.index = 7;
+    hr.sites[a1.vaddr] = a1; hr.sites[a2.vaddr] = a2;
+    g_hookFn = [](CPUState* s, uint64_t k) -> uint64_t { s->gregs[3] += 100 * k; return 0; };
+    g_hookCalls = 0;
+    if (!(e = runHookCase(hr, opt, st, true)).empty()) return "FAIL 1c: " + e;
+    if (!(e = expect("1c indices 3 and 7: rax", st.gregs[0], 1002)).empty() || g_hookCalls != 2) return e + " (hook calls " + std::to_string(g_hookCalls) + ")";
+  }
   // 2. The hook sees the registers and rip = the site; a register it does not touch survives; flags survive the call.
   //    mov rax, 1 ; cmp rax, 1 ; mov rcx, 7 ; H: mov rdx, 3 ; jne bad ; mov rax, 99 ; hlt ; bad: mov rax, 1 ; hlt
   {
