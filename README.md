@@ -14,6 +14,10 @@ time from **your own** copy of the game, once, into a file (`libbbaot.so`). This
 > **Version 1.2.1** changes only the phone build (the app 2.1.1 carries it): it is now an Android (NDK, bionic) program, so it also runs on Android 16
 > and 17, where the security policy stopped the 1.2.0 phone build at once. The code it writes is the same as 1.2.0's, byte for byte; on a PC keep using 1.2.0.
 > Tested on an AYN Thor (Android 13) and an OPPO Find N5 (Snapdragon 8 Elite, Android 16).
+>
+> **Version 1.3.0** adds hook sites for the guest-code fixes of the upstream bbport 0.7 (cloth stiffness above 30 FPS, a guard for the GX occlusion query crash, play time above 30 FPS,
+> the hit collector cap, the character id guard) and **delta rebuilds**: the build files are kept, only the parts that changed are rebuilt, and a build manifest written by a PC build lets the
+> phone check its parts against it. The library is still **ABI 2**. Libraries from 1.2.x still run, but without the new fixes: rebuild to get them (the app 2.2.0 asks for it once).
 
 ## Why you build it yourself
 

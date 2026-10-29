@@ -2,7 +2,7 @@
 // The tool version (CMake passes -DBBR_TOOL_VERSION=<BB_RECOMP_VERSION>; this is the fallback of the other builds) and the ABI version of the .so it writes.
 #pragma once
 #ifndef BBR_TOOL_VERSION
-#define BBR_TOOL_VERSION "1.2.1"
+#define BBR_TOOL_VERSION "1.3.0"
 #endif
 #ifndef BBR_GIT_HASH
 #define BBR_GIT_HASH ""
