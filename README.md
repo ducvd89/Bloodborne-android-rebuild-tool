@@ -17,7 +17,7 @@ time from **your own** copy of the game, once, into a file (`libbbaot.so`). This
 >
 > **Version 1.3.0** adds hook sites for the guest-code fixes of the upstream bbport 0.7 (cloth stiffness above 30 FPS, a guard for the GX occlusion query crash, play time above 30 FPS,
 > the hit collector cap, the character id guard) and **delta rebuilds**: the build files are kept, only the parts that changed are rebuilt, and a build manifest written by a PC build lets the
-> phone check its parts against it. The library is still **ABI 2**. Libraries from 1.2.x still run, but without the new fixes: rebuild to get them (the app 2.2.0 asks for it once).
+> phone check its parts against it. The library is still **ABI 2**. This release has the Windows, Linux and macOS (Apple Silicon) downloads again. Libraries from 1.2.x still run, but without the new fixes: rebuild to get them (the app 2.2.0 asks for it once).
 
 ## Why you build it yourself
 
