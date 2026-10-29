@@ -26,7 +26,7 @@ done
 [[ $(uname -s) == Darwin && $(uname -m) == arm64 ]] || { echo "package-macos.sh: needs an Apple Silicon Mac" >&2; exit 1; }
 J=${BB_JOBS:-$(sysctl -n hw.ncpu)}
 run() { nice -n 19 "$@"; }
-VERSION=${BB_RECOMP_VERSION:-1.2.0}
+VERSION=${BB_RECOMP_VERSION:-1.3.0}
 APPNAME="Bloodborne Android Rebuild Tool"
 ZIPNAME=bb-recomp-macos-arm64.zip
 export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-14.4}
