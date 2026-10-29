@@ -17,9 +17,16 @@
 // address space of many Android kernels (user space ends at 0x8000000000). hi = 0x2b is the value for which Bloodborne 1.09 has no constant in the window:
 // the lowering relocates exactly the same 1,866,280 constants as with the old base 0x3a7700000000, and the library is byte-identical (docs/NATIVE_CPU.md).
 // (hi = 0x20, 0x23 and 0x26, for one, are inside plain constants: 7, 3 and 2 more constants would be relocated.)
+#ifdef __APPLE__
+// macOS on Apple Silicon reserves everything below 0x7000000000 (the dyld shared cache, then a reserved hole up to 0x7000000000), so none of
+// the bases below can be mapped there; the old base 0x3a7700000000 can, and gives the byte-identical library (docs/NATIVE_CPU.md, "The lift base").
+constexpr uint64_t kDefaultLiftBase = 0x3a7700000000ull;
+constexpr uint64_t kFallbackLiftBases[] = {0x2b00000000ull, 0x3d00000000ull, 0x4700000000ull};
+#else
 constexpr uint64_t kDefaultLiftBase = 0x2b00000000ull;
 // Bases to try when the default cannot be mapped (the address range is taken), see ElfImage::mapFailed. Each one was checked like the default.
 constexpr uint64_t kFallbackLiftBases[] = {0x3d00000000ull, 0x4700000000ull};
+#endif
 
 struct ElfSegment {
   uint64_t vaddr, filesz, memsz, offset;

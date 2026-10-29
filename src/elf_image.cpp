@@ -10,6 +10,10 @@
 #else
 #include <sys/mman.h>
 #endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 
 namespace {
 struct Ehdr { uint8_t ident[16]; uint16_t type, machine; uint32_t version; uint64_t entry, phoff, shoff;
@@ -51,6 +55,14 @@ void* mapFixed(uint64_t addr, uint64_t size) {
   }
 #ifdef _WIN32
   return VirtualAlloc((void*)addr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#elif defined(__APPLE__)
+  // no MAP_FIXED_NOREPLACE, and mmap ignores a hint below the start of its search range: mach_vm_allocate at a fixed address without
+  // VM_FLAGS_OVERWRITE maps there or fails when any of the range is in use (zero-filled, read/write; munmap releases it)
+  mach_vm_address_t a = addr;
+  const kern_return_t kr = mach_vm_allocate(mach_task_self(), &a, size, VM_FLAGS_FIXED);
+  if (kr == KERN_SUCCESS) return (void*)a;
+  errno = kr == KERN_NO_SPACE ? EEXIST : ENOMEM;
+  return nullptr;
 #else
   void* p = mmap((void*)addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
   if (p == MAP_FAILED) return nullptr;
@@ -93,10 +105,13 @@ bool ElfImage::load(const std::string& path, uint64_t baseAddr, std::string& err
   }
   if (loads.empty()) { err = "no PT_LOAD"; return false; }
   modules.assign(1, ModuleInfo {"eboot", 0, top, ehFrameHdrVaddr, ehFrameHdrSize, entry});
+  uint64_t mappedEnd = 0;  // segments sorted by vaddr may share a host page (16 KB on macOS): map only the part not mapped yet
   for (auto& s : loads) {
     if (s.flags & 1) { textLo = s.vaddr; textHi = s.vaddr + s.memsz; }
     uint64_t a = (baseAddr + s.vaddr) & ~(Page - 1), e = (baseAddr + s.vaddr + s.memsz + Page - 1) & ~(Page - 1);
-    if (!mapFixed(a, e - a)) {
+    if (a < mappedEnd) a = mappedEnd;
+    if (a < e) mappedEnd = e;
+    if (a < e && !mapFixed(a, e - a)) {
       // Segments may share a page boundary only if they overlap; PS4 segments are page aligned, so a
       // failure here means the base is already in use.
       err = mapError(a, e - a); mapFailed = true; return false;

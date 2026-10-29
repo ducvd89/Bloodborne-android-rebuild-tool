@@ -6,9 +6,10 @@
 #   host    -> out/host/pkg-tool/ps4-pkg-tool        (tests/recomp-pkgs)
 #   linux   -> out/linux/pkg-tool/ps4-pkg-tool       (the AppImage: built against an Ubuntu 22.04 sysroot (glibc 2.35) with the LLVM tarball's clang,
 #              static libstdc++; needs BB_SYSROOT, BB_LLVM_ROOT, BB_ZLIB_PREFIX, see fetch-deps.sh)
+#   macos   -> out/macos/pkg-tool/ps4-pkg-tool        (the .app: Apple Silicon, built with the LLVM tarball's clang (BB_LLVM_ROOT), the system zlib)
 #   windows -> out/windows/pkg-tool/ps4-pkg-tool.exe (cross-compiled with llvm-mingw, static; needs BB_MINGW_ROOT and a zlib for mingw in
 #              BB_MINGW_ZLIB_PREFIX, see package-windows.sh)
-# Usage: shared/pkg-tool/build_pkg_tool.sh [host|linux|windows]   (default: host)
+# Usage: shared/pkg-tool/build_pkg_tool.sh [host|linux|macos|windows]   (default: host)
 # Source: $BB_PKG_TOOL_SRC, else .local-deps/src/ps4-pkg-tools (fetched on first use).
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
@@ -77,6 +78,25 @@ build_linux() {
     echo "Built $out/ps4-pkg-tool (Linux x86-64, glibc 2.35)"
 }
 
+# macOS (arm64) for the .app: the system's zlib and libc++, so the program needs nothing beyond macOS itself.
+build_macos() {
+    local llvm=${BB_LLVM_ROOT:-}
+    [[ -x $llvm/bin/clang ]] || { echo "Set BB_LLVM_ROOT (fetch-deps-macos.sh)" >&2; exit 1; }
+    local out=$root/out/macos/pkg-tool build=$root/out/macos/pkg-tool-build
+    local target=${MACOSX_DEPLOYMENT_TARGET:-14.4}
+    local object; object=$(shim "$build" "$llvm/bin/clang" -arch arm64 -mmacosx-version-min="$target" -isysroot "$(xcrun --show-sdk-path)")
+    sed -i '' 's|</usr/include/zlib.h>|<zlib.h>|' "$src/src/core/file_format/pkg.cpp"
+    run cmake -S "$src" -B "$build" -G Ninja -DCMAKE_C_COMPILER="$llvm/bin/clang" -DCMAKE_CXX_COMPILER="$llvm/bin/clang++" \
+        -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$target" -DCMAKE_BUILD_TYPE=Release -DBUILD_PKG_QT_GUI=OFF \
+        -DCRYPTOPP_BUILD_TESTING=OFF "-DCMAKE_EXE_LINKER_FLAGS=$object" \
+        >"$build/cmake.log" 2>&1 || { tail -30 "$build/cmake.log" >&2; exit 1; }
+    run ninja -C "$build" -j "$jobs" ps4-pkg-tool >"$build/build.log" 2>&1 || { tail -40 "$build/build.log" >&2; exit 1; }
+    mkdir -p "$out"
+    cp "$build/ps4-pkg-tool" "$out/ps4-pkg-tool"
+    "$llvm/bin/llvm-strip" "$out/ps4-pkg-tool"
+    echo "Built $out/ps4-pkg-tool (macOS arm64)"
+}
+
 # Windows (x86-64), cross-compiled with llvm-mingw; everything static, so the .exe needs only the system's own DLLs.
 build_windows() {
     local mingw=${BB_MINGW_ROOT:-} zprefix=${BB_MINGW_ZLIB_PREFIX:-}
@@ -102,8 +122,9 @@ build_windows() {
 
 case $which in
     linux) build_linux ;;
+    macos) build_macos ;;
     windows) build_windows ;;
     host) build_host ;;
     all) build_host ;;
-    *) echo 'usage: build_pkg_tool.sh [host|linux|windows]' >&2; exit 2 ;;
+    *) echo 'usage: build_pkg_tool.sh [host|linux|macos|windows]' >&2; exit 2 ;;
 esac

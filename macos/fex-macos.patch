@@ -1,0 +1,22 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 87b7c31..0b8f1da 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -61,7 +61,7 @@ if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+   message(FATAL_ERROR "Unsupported pointer size ${CMAKE_SIZEOF_VOID_P}."
+     " FEX only supports 64-bit (8-byte pointer) systems."
+     " If you believe this is in error, file an issue.")
+-elseif (NOT (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
++elseif (NOT (WIN32 OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+   message(FATAL_ERROR "Unsupported system type ${CMAKE_SYSTEM_NAME}."
+     " FEX only supports Linux and Windows."
+     " If you believe this is in error, file an issue.")
+@@ -224,7 +224,7 @@ check_cxx_source_compiles(
+   HAS_CLANG_PRESERVE_ALL)
+ unset(CMAKE_REQUIRED_FLAGS)
+ if (HAS_CLANG_PRESERVE_ALL)
+-  if (MINGW)
++  if (MINGW OR APPLE)
+     message(STATUS "Ignoring broken clang::preserve_all support")
+     set(HAS_CLANG_PRESERVE_ALL FALSE)
+   else()

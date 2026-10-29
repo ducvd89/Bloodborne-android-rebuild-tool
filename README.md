@@ -76,7 +76,6 @@ Download it from the [latest release](https://github.com/ducvd89/Bloodborne-andr
 - **macOS (Apple Silicon):** `bb-recomp-macos-arm64.zip`. Unzip it and move **Bloodborne Android Rebuild Tool** to Applications.
   The app is not notarized: the first time, **right-click it → Open → Open** (or run
   `xattr -dr com.apple.quarantine "/Applications/Bloodborne Android Rebuild Tool.app"`). Intel Macs are not supported.
-  Built from the [`macos`](https://github.com/ducvd89/Bloodborne-android-rebuild-tool/tree/macos) branch, which also has its build instructions.
 - **Linux:** `Bloodborne-Android-Rebuild-Tool-x86_64.AppImage`. Make it executable
   (`chmod +x Bloodborne-Android-Rebuild-Tool-x86_64.AppImage`) and double-click it. If nothing happens, your
   system lacks FUSE 2: run it from a terminal with `./Bloodborne-Android-Rebuild-Tool-x86_64.AppImage --appimage-extract-and-run`.
@@ -228,6 +227,20 @@ tarball, an Ubuntu sysroot, zlib, zstd, SDL3, Dear ImGui; `fetch-ndk.sh`: the ND
 of downloads and about half an hour the first time. Everything runs at `nice -n 19`; `BB_JOBS` sets the
 number of jobs (22 by default).
 
+### macOS (Apple Silicon)
+
+```
+./package-macos.sh  # -> out/dist/Bloodborne Android Rebuild Tool.app and out/dist/bb-recomp-macos-arm64.zip
+```
+
+Needs Xcode or the Command Line Tools, cmake, ninja, git, python3 with Pillow. `fetch-deps-macos.sh` fetches the LLVM 23.1.3 macOS arm64
+release tarball, builds zstd and SDL3 (static) and fetches Dear ImGui and the macOS NDK r29. FEX's front end is built natively for arm64:
+`macos/fex-macos.patch` (two lines of FEX's CMake, applied by `fetch-fex.sh`) lets it configure on Darwin, `macos/compat` stands in for the
+Linux headers and system calls it names (futex → `os_sync_wait_on_address`), and `macos/allocator_hooks.cpp` replaces FEX's glibc allocator
+hooks. The lifter uses the same synthetic host features on every PC. A developer build works as on Linux with Homebrew's `llvm`:
+`cmake -S . -B out/recomp-build -G Ninja -DBB_RECOMP_CC=$(brew --prefix llvm)/bin/clang -DBB_RECOMP_CXX=$(brew --prefix llvm)/bin/clang++
+-DBB_RECOMP_LLVM_DIR=$(brew --prefix llvm)/lib/cmake/llvm` (the test runners `bb-recomp-asmtest`/`-difftest` are Linux only).
+
 ### Cross-building for Windows
 
 On Linux, `./package-windows.sh` cross-compiles the Windows program with llvm-mingw (static: nothing to
@@ -279,6 +292,7 @@ variants/gen_bbsc.py        --main-repo ../Bloodborne-Android --eboot <eboot.elf
 | `helpers/` | the x87 helpers the lowered code calls (adapted from FEX, MIT; SoftFloat, BSD-3-Clause) |
 | `variants/` | the generated variant and hook catalogs, and their generators |
 | `windows/` | support files of the Windows (llvm-mingw) build |
+| `macos/` | support files of the macOS build: FEX's CMake patch, Linux header and system call stand-ins, the allocator back end |
 | `shared/prepare/` | the game image builder (`bb-prepare`), shared with the Android app; compiled into the tool |
 | `shared/pkg-tool/` | the build script and the patches for `ps4-pkg-tool`, and the script that fetches its source |
 | `third_party/FEX` | the pin of FEX-Emu 2609.1 (a submodule; `fetch-fex.sh` fetches it) |

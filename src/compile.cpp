@@ -40,6 +40,9 @@
 #else
 #include <windows.h>
 #endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 
 using namespace llvm;
 using clk = std::chrono::steady_clock;
@@ -283,11 +286,23 @@ bool emitTable(const std::vector<uint64_t>& ehHdrs, const std::vector<uint64_t>&
   return true;
 }
 
+// The NDK's prebuilt toolchain directory for this host (the macOS NDK's binaries are universal, in darwin-x86_64).
+#ifdef __APPLE__
+#define BBR_NDK_HOST "darwin-x86_64"
+#else
+#define BBR_NDK_HOST "linux-x86_64"
+#endif
+
 // Available memory in GB: MemAvailable (Linux), limited by a cgroup v2 memory.max; GlobalMemoryStatusEx on Windows. 0: unknown.
 double availableMemoryGB() {
 #ifdef _WIN32
   MEMORYSTATUSEX m; m.dwLength = sizeof m;
   return GlobalMemoryStatusEx(&m) ? m.ullAvailPhys / 1073741824.0 : 0.0;
+#elif defined(__APPLE__)
+  // free, inactive, speculative and purgeable pages: what the system gives back without swapping (Activity Monitor's "available")
+  vm_statistics64_data_t vs; mach_msg_type_number_t n = HOST_VM_INFO64_COUNT; vm_size_t page = 0;
+  if (host_page_size(mach_host_self(), &page) != KERN_SUCCESS || host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vs, &n) != KERN_SUCCESS) return 0.0;
+  return (double)((uint64_t)vs.free_count + vs.inactive_count + vs.speculative_count + vs.purgeable_count) * page / 1073741824.0;
 #else
   double avail = 0;
   if (FILE* f = fopen("/proc/meminfo", "r")) {
@@ -1013,7 +1028,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     std::string dir = opt.helpersDir.empty() ? std::string(BBR_HELPERS_DIR) : opt.helpersDir;
     std::string cmd;
     if (opt.target.aarch64) {
-      cmd = "nice -n 19 " + opt.ndk + "/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-linux-android30";
+      cmd = "nice -n 19 " + opt.ndk + "/toolchains/llvm/prebuilt/" BBR_NDK_HOST "/bin/clang --target=aarch64-linux-android30";
     } else {
       cmd = "nice -n 19 clang";
     }
@@ -1031,7 +1046,7 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
     auto t = clk::now();
     std::string cmd;
     if (opt.target.aarch64) {
-      const std::string bin = opt.ndk + "/toolchains/llvm/prebuilt/linux-x86_64";
+      const std::string bin = opt.ndk + "/toolchains/llvm/prebuilt/" BBR_NDK_HOST;
       cmd = "nice -n 19 " + bin + "/bin/ld.lld -shared -m aarch64linux --hash-style=gnu -z noexecstack -z max-page-size=16384 -Bsymbolic --build-id=none "
             "-soname " + opt.soPath.substr(opt.soPath.rfind('/') + 1) + " -o " + opt.soPath;
       for (auto& o : objFiles) cmd += " " + o;
@@ -1100,6 +1115,9 @@ int runCompile(const ElfImage& img, const std::vector<Func>& funcs, const Compil
   long rssKb = 0;
 #ifndef _WIN32
   struct rusage ru; if (getrusage(RUSAGE_SELF, &ru) == 0) rssKb = ru.ru_maxrss;
+#ifdef __APPLE__
+  rssKb /= 1024;  // bytes on Darwin
+#endif
 #endif
   say("\n== compile summary (%s, -O%d, %u shards, %u threads) ==\n", opt.target.aarch64 ? "aarch64" : "x86_64", opt.target.opt, nshards, jobs);
   if (plan.availGB > 0)

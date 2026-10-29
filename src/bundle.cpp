@@ -16,6 +16,10 @@
 #else
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <climits>
+#include <mach-o/dyld.h>
+#endif
 #ifdef BBR_BUNDLED
 #include <lld/Common/Driver.h>
 #include <llvm/Support/raw_ostream.h>
@@ -63,9 +67,8 @@ std::string exeDir() {
   size_t s = p.find_last_of("\\/");
   return s == std::string::npos ? "." : p.substr(0, s);
 #else
-  char b[4096]; ssize_t n = readlink("/proc/self/exe", b, sizeof b - 1);
-  if (n <= 0) return ".";
-  std::string p(b, n);
+  std::string p = bundleExePath();
+  if (p.empty()) return ".";
   size_t s = p.rfind('/');
   return s == std::string::npos ? "." : p.substr(0, s);
 #endif
@@ -124,10 +127,24 @@ bool has(const std::string& s, const char* sub) { return s.find(sub) != std::str
 
 std::string bundleExeDir() { return exeDir(); }
 
+std::string bundleExePath() {
+#ifdef _WIN32
+  char b[4096]; DWORD n = GetModuleFileNameA(nullptr, b, sizeof b);
+  return std::string(b, n);
+#elif defined(__APPLE__)
+  char b[PATH_MAX]; uint32_t n = sizeof b; char r[PATH_MAX];
+  if (_NSGetExecutablePath(b, &n) != 0) return "";
+  return realpath(b, r) ? std::string(r) : std::string(b);
+#else
+  char b[4096]; ssize_t n = readlink("/proc/self/exe", b, sizeof b - 1);
+  return n > 0 ? std::string(b, (size_t)n) : std::string();
+#endif
+}
+
 std::string bundleDirDefault() {
 #ifdef BBR_BUNDLED
   if (const char* e = getenv("BB_RECOMP_BUNDLE_DIR")) return dirExists(e) ? e : "";
-  for (const std::string& d : {exeDir() + "/../share/bb-recomp", exeDir() + "/share/bb-recomp", exeDir() + "/bundle"})
+  for (const std::string& d : {exeDir() + "/../share/bb-recomp", exeDir() + "/../Resources/bb-recomp", exeDir() + "/share/bb-recomp", exeDir() + "/bundle"})
     if (dirExists(d)) return d;
 #endif
   return "";
