@@ -54,7 +54,7 @@ from your PKGs (see the README):
     variants/gen_patch_parts.py --main-repo M > variants/patch-parts.txt   # M/tools/android/build_patch_parts.py (needs the eboot)
     variants/gen_bbsc.py        --main-repo M                              # bbsc-patches.txt + hooks-bbsc.txt (M/gpu/bbnet20; needs the eboot and bbsc_sites)
     variants/gen_hooks_shim.py  --main-repo M > variants/hooks-shim.txt    # M/gpu/shim/bbport_guest_hooks.cpp
-    variants/gen_patchers.py    --main-repo M                              # patchers.txt + hooks-patchers.txt: runs the frame rate, display and guard patchers (needs the image)
+    variants/gen_patchers.py    --main-repo M                              # patchers.txt + hooks-patchers.txt: runs the frame rate, display, guard and engine fix patchers (needs the image)
     (each has --check: exit 1 when the catalog is out of date)
 
 Tests: `bb-recomp-asmtest --null-selftest` (a call whose return block stores to / loads from address 0, the game's panic: the unit must run the block and fault there, not return at the call-return address; needs `null_pointer_is_valid` on the units), `bb-recomp-asmtest --cpuid-diff` (the native CPUID model of the FEX-free runtime, cpu/guest_cpu_cpuid.h, against FEXCore's own over every function and sub-leaf; only in the Bloodborne-Android tree), `bb-recomp-asmtest --granular-selftest` (a unit entered at every instruction boundary of a granular function, flags from the context, a non-boundary refused),

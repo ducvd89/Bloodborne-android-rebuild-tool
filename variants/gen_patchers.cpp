@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Prints the variant catalog entries of the port's own code patchers (frame rate, display, guest guards), by running them: the real patcher sources
-// (gpu/shim/bbport_frame_rate.cpp, bbport_display.cpp, bbport_guest_guards.cpp) are built with BB_HOOK_SITE_DUMP, which makes bbport_hook_sites.h print
+// Prints the variant catalog entries of the port's own code patchers (frame rate, display, guest guards, engine fixes), by running them: the real patcher sources
+// (gpu/shim/bbport_frame_rate.cpp, bbport_display.cpp, bbport_guest_guards.cpp, bbport_engine_fixes.cpp) are built with BB_HOOK_SITE_DUMP, which makes bbport_hook_sites.h print
 // every native hook site they declare (`hook <image offset> <length> snap [resume=...]`) instead of installing it, and run against the game's flat
 // image (out/boot-linked.bin's memory image). The bytes the frame-rate patcher writes in that mode (the operand redirects to `live` at its fixed
 // place in the image, the nops and the run speed's divss) are printed as a group (`@group` / `@w` lines). Run by gen_patchers.py with the settings
@@ -16,6 +16,7 @@
 
 #include "guest_cpu.h" // the main project's src/ (gen_patchers.py passes -I <main repo>/src)
 #include "bbport_display.h"
+#include "bbport_engine_fixes.h"
 #include "bbport_frame_rate.h"
 #include "bbport_guest_guards.h"
 
@@ -28,6 +29,10 @@ int guest_cpu_hook_slot(uintptr_t, size_t, GuestHookEx, void*) { return 1; }
 int runtime_memory_is_mapped(uintptr_t, uint64_t) { return 0; }
 }
 bool BbSubmitFxInitZero(std::uint64_t, std::uint32_t) { return false; }
+extern "C" {
+std::uint64_t runtime_disabled_optimizations = 0;  // bbport_toggles.h (the frame rate's cloth reads an experiment bit)
+std::uint64_t runtime_experiment_bits = 0;
+}
 
 int main(int argc, char** argv) {
     if (argc < 2) { std::fprintf(stderr, "usage: gen_patchers IMAGE.bin\n"); return 2; }
@@ -57,6 +62,7 @@ int main(int argc, char** argv) {
     BbFrameRate::PatchImage(image, size);
     BbDisplay::PatchImage(image, size);
     BbGuestGuards::PatchImage(image, size);
+    BbEngineFixes::PatchImage(image, size);
     // The bytes the patchers wrote.
     std::printf("@group\n");
     for (size_t at = 0; at < size;) {

@@ -148,7 +148,7 @@ The `.so` has 38 catalog groups (36 touch code), 146 variants (198 units, 48 onl
 | `variants/bbsc-patches.txt` | `gen_bbsc.py` (+ `gen_bbsc_tables.cpp`) | `gpu/bbnet20/bbsc/core/bbsc_patch_tables.h` (compiled and run), constants of `bloodborne_re.cpp` (the 13 seamless patches) | a C++ compiler |
 | `variants/hooks-bbsc.txt` | `gen_bbsc.py` | the sites `InstallGuestCodeHook` is called for, from `tools/android/dev/bbsc_sites.sh` (BBSC's own install code on the pristine eboot) | `out/eboot.elf`, the tool's build or `--sites-tool` |
 | `variants/hooks-shim.txt` | `gen_hooks_shim.py` | constants of `gpu/shim/bbport_guest_hooks.cpp` | nothing |
-| `variants/patchers.txt`, `hooks-patchers.txt` | `gen_patchers.py` (+ `gen_patchers.cpp`) | the real patcher sources (`bbport_frame_rate.cpp`, `bbport_display.cpp`, `bbport_guest_guards.cpp`) built with `BB_HOOK_SITE_DUMP` and run against the flat image in four settings | `out/boot-linked.bin`, `out/eboot.elf`, a C++ compiler |
+| `variants/patchers.txt`, `hooks-patchers.txt` | `gen_patchers.py` (+ `gen_patchers.cpp`) | the real patcher sources (`bbport_frame_rate.cpp`, `bbport_display.cpp`, `bbport_guest_guards.cpp`, `bbport_engine_fixes.cpp`) built with `BB_HOOK_SITE_DUMP` and run against the flat image in four settings | `out/boot-linked.bin`, `out/eboot.elf`, a C++ compiler |
 
 `gen_patch_parts.py --check <file>`, `gen_bbsc.py --check`, `gen_hooks_shim.py --check <file>`, `gen_patchers.py --check` exit 1 when a catalog is out of date: run them when a
 patch table, a patch part or a hook site changes.
